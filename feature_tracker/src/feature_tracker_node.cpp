@@ -33,10 +33,10 @@ ros::Publisher pub_restart;
 FeatureTracker trackerData[NUM_OF_CAM];
 
 double first_image_time;
-int pub_count = 1;
+int pub_count = 1;  // 每隔delta_t = 1/FREQ 时间内连续(没有中断/没有报错)发布的帧数
 bool first_image_flag = true;
 double last_image_time = 0;
-bool init_pub = 0;
+bool init_pub = 0;  // 0:第一帧不把特征发布到buf里    1:发布到buf里
 
 
 void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
@@ -51,6 +51,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
     }
 
     // detect unstable camera stream
+    // 时间戳变化异常（超过1秒或时间戳倒退）, 重置特征跟踪器
     if (img_msg->header.stamp.toSec() - last_image_time > 1.0 || img_msg->header.stamp.toSec() < last_image_time)
     {
         ROS_WARN("image discontinue! reset the feature tracker!");
@@ -67,10 +68,12 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
     last_image_time = img_msg->header.stamp.toSec();
 
     // frequency control
+    // 如果当前帧的发布频率小于设定的频率 FREQ（单位：帧/秒），则允许发布当前帧数据
     if (round(1.0 * pub_count / (img_msg->header.stamp.toSec() - first_image_time)) <= FREQ)
     {
         PUB_THIS_FRAME = true;
         // reset the frequency control
+        // 如果当前帧的发布频率接近设定的频率 FREQ，则重置频率控制
         if (abs(1.0 * pub_count / (img_msg->header.stamp.toSec() - first_image_time) - FREQ) < 0.01 * FREQ)
         {
             first_image_time = img_msg->header.stamp.toSec();
@@ -103,7 +106,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
         ROS_DEBUG("processing camera %d", i);
-        if (i != 1 || !STEREO_TRACK)
+        if (i != 1 || !STEREO_TRACK)// 单目或者不进行立体跟踪
             trackerData[i].readImage(ptr->image.rowRange(ROW * i, ROW * (i + 1)), img_msg->header.stamp.toSec());
         else
         {
