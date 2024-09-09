@@ -23,22 +23,22 @@ using namespace Eigen;
 
 
 /**
- * @brief check whether the pixel coordinates of tracking features in border or not
- * @param Input cv::Point2f &pt
+ * @brief 检查跟踪特征点的像素坐标是否在边界内
+ * @param 输入 cv::Point2f &pt
  */
 bool inBorder(const cv::Point2f &pt);
 
 /**
- * @brief delete items in output value according to the input value
- * @param Input  vector<uchar> status
- * @param Output vector<cv::Point2f> &v
-*/
+ * @brief 根据输入值删除输出值中的项目
+ * @param 输入  vector<uchar> status
+ * @param 输出  vector<cv::Point2f> &v
+ */
 void reduceVector(vector<cv::Point2f> &v, vector<uchar> status);
 
 /**
- * @brief delete items in output value according to the input value
- * @param Input  vector<uchar> status
- * @param Output vector<int> &v
+ * @brief 根据输入值删除输出值中的项目
+ * @param 输入  vector<uchar> status
+ * @param 输出  vector<int> &v
  */
 void reduceVector(vector<int> &v, vector<uchar> status);
 
@@ -52,88 +52,90 @@ class FeatureTracker
     FeatureTracker();
 
     /**
-     * @brief eualize the image 
-     * @param Input  const cv::Mat &_img
-     * @param Output cv::Mat &img
+     * @brief 均衡图像
+     * @param 输入  const cv::Mat &_img
+     * @param 输出  cv::Mat &img
      */
-    void equalize(const cv::Mat &_img,cv::Mat &img);
+    void equalize(const cv::Mat &_img, cv::Mat &img);
 
     /**
-     * @brief track existing features and delete failures 
+     * @brief 跟踪现有特征并删除失败的特征
      */
     void flowTrack();
 
     /**
-     * @brief track new features in forward image
+     * @brief 在前向图像中跟踪新特征
      */
     void trackNew();
 
     /**
-     * @brief main process of feature tracker
-     * @param Input  const cv::Mat &_img
-     * @param Input  double _cur_time
+     * @brief 特征跟踪器的主要处理过程
+     * @param 输入  const cv::Mat &_img
+     * @param 输入  double _cur_time
      */
-    void readImage(const cv::Mat &_img,double _cur_time);
+    void readImage(const cv::Mat &_img, double _cur_time);
 
     /**
-     * @brief rank features according to their existing times and setMask for high rank features
-     * to avoid crowded layout of features
+     * @brief 根据特征存在的时间对其进行排序，并为高排名特征设置掩码，以避免特征布局过于密集
      */
     void setMask();
 
     /**
-     * @brief add new tracked features into buffer
+     * @brief 将新跟踪的特征添加到缓冲区
      */
     void addPoints();
 
     /**
-     * @brief update ID for features
+     * @brief 更新特征的ID
      */
     bool updateID(unsigned int i);
 
     /**
-     * @brief read cameras' parameters
-     * @param Input  const string &calib_file
+     * @brief 读取相机参数
+     * @param 输入  const string &calib_file
      */
     void readIntrinsicParameter(const string &calib_file);
 
     /**
-     * @brief show undistortion
-     * TODO not important ,can be deleted
-     * @param Input  const string &name
+     * @brief 显示去畸变效果
+     * TODO 不重要，可以删除
+     * @param 输入  const string &name
      */
     void showUndistortion(const string &name);
 
     /**
-     * @brief use Fundamental matrix to delete outliers
+     * @brief 使用基本矩阵删除离群点
      */
     void rejectWithF();
 
     /**
-     * @brief get undistorted normalized coordinates of features
-     * @param Input  const string &name
+     * @brief 获取特征的去畸变归一化坐标
+     * @param 输入  const string &name
      */
     void undistortedPoints();
 
-    cv::Mat mask;
-    cv::Mat fisheye_mask;
+    cv::Mat mask; // 图像掩码
+    cv::Mat fisheye_mask; // 鱼眼相机mask，用来去除边缘噪点
 
-    cv::Mat prev_img, cur_img, forw_img;
-    vector<cv::Point2f> n_pts;
-    vector<cv::Point2f> prev_pts, cur_pts, forw_pts;
-    vector<cv::Point2f> prev_un_pts, cur_un_pts;
-    vector<cv::Point2f> pts_velocity;
-    vector<int> ids;
-    vector<int> track_cnt;
-    map<int, cv::Point2f> cur_un_pts_map;
-    map<int, cv::Point2f> prev_un_pts_map;
+    cv::Mat prev_img, cur_img, forw_img; // 上上次发布的帧的图像数据/光流跟踪的上一帧的图像数据/当前的图像数据
 
-    camodocal::CameraPtr m_camera;
-    
-    double cur_time;
-    double prev_time;
+    vector<cv::Point2f> n_pts; // 每一帧中新提取的特征点
+    vector<cv::Point2f> prev_pts, cur_pts, forw_pts; // 对应的图像特征点
+    vector<cv::Point2f> prev_un_pts, cur_un_pts; // 归一化相机坐标系下的坐标
+    vector<cv::Point2f> pts_velocity; // 当前帧相对前一帧特征点沿x,y方向的像素移动速度
 
-    static int n_id;
+    vector<int> ids; // 能够被跟踪到的特征点的id
+    vector<int> track_cnt; // 当前帧forw_img中每个特征点被追踪的时间次数
+
+    map<int, cv::Point2f> cur_un_pts_map; // 构建id与归一化坐标的映射，见undistortedPoints()
+    map<int, cv::Point2f> prev_un_pts_map; // 上一帧的id与归一化坐标的映射
+
+    camodocal::CameraPtr m_camera; // 相机模型
+
+    double cur_time; // 当前时间
+    double prev_time; // 上一帧时间
+
+    static int n_id; // 用来作为特征点id，每检测到一个新的特征点，就将++n_id作为该特征点的id
 };
 
 #endif
