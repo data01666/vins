@@ -1,6 +1,8 @@
 #include "../include/feature_tracker.h"
+#include "../include/line_feature.h"
 
 int FeatureTracker::n_id = 0;//特征点 ID 从 0 开始递增
+int FeatureTracker::pl_status = 0;//默认使用点特征
 
 bool inBorder(const cv::Point2f &pt)
 {
@@ -31,6 +33,25 @@ void reduceVector(vector<int> &v, vector<uchar> status)
 
 // the following function belongs to FeatureTracker Class
 FeatureTracker::FeatureTracker() {}
+
+// 分析场景亮度和纹理复杂度，根据预设的阈值和区间分配，选择不同的策略
+void FeatureTracker::analyzeImage(const cv::Mat &image, int &strategy) {
+    // 计算图像的亮度
+    cv::Scalar mean_val = cv::mean(image);
+    double brightness = mean_val[0];
+
+    // 计算纹理复杂度（通过拉普拉斯变换）
+    cv::Mat laplace;
+    cv::Laplacian(image, laplace, CV_64F);
+    cv::Scalar laplace_mean, laplace_stddev;
+    cv::meanStdDev(laplace, laplace_mean, laplace_stddev);
+    double texture_complexity = laplace_stddev[0];
+
+    // 根据预设的阈值和区间分配，选择不同的策略
+    if (brightness < 50 && texture_complexity < 10) {
+        strategy = 1;  // 低光照、低纹理，使用线特征
+    }
+}
 
 void FeatureTracker::equalize(const cv::Mat &_img,cv::Mat &img)
 {
@@ -183,6 +204,10 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
     TicToc t_r;
     cur_time = _cur_time;
 
+    // 场景分析，决定使用点、线特征或两者结合
+    analyzeImage(_img, pl_status);
+
+    // 图像直方图均衡化
     equalize(_img, img);
 
     if (forw_img.empty())
@@ -196,23 +221,84 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
 
     forw_pts.clear();
 
-    flowTrack();
+    if (pl_status == 0) // 默认使用点特征
+    {
+        flowTrack();
 
-    // 已跟踪的特征点计数器加一
-    for (auto &n : track_cnt)
-        n++;
+        // 已跟踪的特征点计数器加一
+        for (auto &n : track_cnt)
+            n++;
 
-    trackNew();
-    
-    prev_img = cur_img;
-    prev_pts = cur_pts;
-    prev_un_pts = cur_un_pts;
-    cur_img = forw_img;
-    cur_pts = forw_pts;
-    // 特征点去畸变
-    undistortedPoints();
-    prev_time = cur_time;
+        trackNew();
+
+        prev_img = cur_img;
+        prev_pts = cur_pts;
+        prev_un_pts = cur_un_pts;
+        cur_img = forw_img;
+        cur_pts = forw_pts;
+
+        // 特征点去畸变
+        undistortedPoints();
+        prev_time = cur_time;
+    }
+    else if (pl_status == 1) // 使用线特征
+    {
+        // 检测线特征
+        EDLines lines = EDLines(forw_img);
+
+        // 进行线特征的跟踪（可以采用光流法跟踪线段关键点）
+        lineFeature.extractKeyPoints();  // 提取线段关键点
+
+        // 线段匹配（使用 DTW 算法或者其他方法）
+        if (!prev_lineFeature.empty()) {
+            lineFeature.matchLinesWithDTW(prev_lineFeature);
+        }
+
+        // 保存当前帧的线特征，用于下一帧的匹配
+        prev_lineFeature = lineFeature;
+
+        prev_img = cur_img;
+        cur_img = forw_img;
+        prev_time = cur_time;
+    }
+    else if (pl_status == 2) // 使用点特征和线特征结合
+    {
+        // 1. 先处理点特征
+        flowTrack();
+
+        // 已跟踪的特征点计数器加一
+        for (auto &n : track_cnt)
+            n++;
+
+        trackNew();
+
+        // 2. 再处理线特征
+        LineFeature lineFeature;
+        lineFeature.detectLines(forw_img);
+
+        // 提取线段关键点
+        lineFeature.extractKeyPoints();
+
+        // 线段匹配（DTW匹配）
+        if (!prev_lineFeature.empty()) {
+            lineFeature.matchLinesWithDTW(prev_lineFeature);
+        }
+
+        // 保存当前帧的线特征，用于下一帧的匹配
+        prev_lineFeature = lineFeature;
+
+        prev_img = cur_img;
+        prev_pts = cur_pts;
+        prev_un_pts = cur_un_pts;
+        cur_img = forw_img;
+        cur_pts = forw_pts;
+
+        // 特征点去畸变
+        undistortedPoints();
+        prev_time = cur_time;
+    }
 }
+
 
 // 通过基础矩阵（Fundamental Matrix）和RANSAC算法对特征点匹配进行筛选
 void FeatureTracker::rejectWithF()

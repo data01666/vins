@@ -16,6 +16,7 @@
 
 #include "parameters.h"
 #include "tic_toc.h"
+#include "line_feature.h"
 
 using namespace std;
 using namespace camodocal;
@@ -50,6 +51,13 @@ class FeatureTracker
 {
   public:
     FeatureTracker();
+
+    /**
+     * @brief 读取图像并分析判断使用什么策略
+     * @param 输入  const cv::Mat &_img
+     * @param 输出   int pl_status; 0表示只使用点特征，1表示使用线特征，2表示使用线和点特征
+     */
+    void analyzeImage(const cv::Mat &_img, int &pl_status);
 
     /**
      * @brief 均衡图像
@@ -136,6 +144,14 @@ class FeatureTracker
     double prev_time; // 上一帧时间
 
     static int n_id; // 用来作为特征点id，每检测到一个新的特征点，就将++n_id作为该特征点的id
+
+    static int pl_status; // 用来记录处理的图像的状态，0表示只使用点特征，1表示使用线特征，2表示使用线和点特征
+    std::vector<LineSegment> prev_line_segments,cur_line_segments,forw_line_segments; // 对应的线特征
+    // 线段的ID和跟踪次数
+    vector<int> line_ids;       // 线段的ID
+    vector<int> line_track_cnt; // 线段的跟踪次数
+    // 线段的速度（可以根据关键点位置计算）
+    vector<cv::Point2f> line_velocity; // 每一条线段的移动速度
 };
 
 #endif
