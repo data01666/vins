@@ -604,9 +604,9 @@ int EDLines::RetrieveChainNos(Chain *chains, int root, int chainNos[]) {
 }
 
 // 返回 linePoints，即所有检测到的线段
-vector<LS> EDLines::getLines()
+vector<LineSegment> EDLines::getLines()
 {
-    return linePoints;
+    return lines;
 }
 
 // 将检测到的线段绘制在原始图像上，并返回彩色图像
@@ -651,30 +651,28 @@ int EDLines::ComputeMinLineLength() {
  */
 void EDLines::SplitSegment2Lines(double *x, double *y, int noPixels, int segmentNo) {
 
-    // 第一个像素的索引
     int firstPixelIndex = 0;
 
     // 当剩余像素数量大于等于最小线段长度时，开始分割
     while (noPixels >= min_line_len) {
-        // 尝试拟合最小长度的线段
         bool valid = false;
         double lastA, lastB, error;
         int lastInvert;
 
+        std::vector<std::pair<double, double>> keyPoints;  // 用于存储关键点
+
         while (noPixels >= min_line_len) {
-            // 拟合一条最小长度的线段
             LineFit(x, y, min_line_len, lastA, lastB, error, lastInvert);
+            if (error <= 0.5) {
+                valid = true;
+                break;
+            }
 
-            // 如果误差小于等于 0.5，说明拟合成功，标记为有效
-            if (error <= 0.5) { valid = true; break; }
-
-            // 如果误差不符合要求，减少一个像素继续尝试
             noPixels -= 1;
             x += 1; y += 1;
             firstPixelIndex += 1;
         }
 
-        // 如果无法拟合有效线段，结束分割
         if (!valid) return;
 
         // 尝试延长线段
@@ -689,16 +687,19 @@ void EDLines::SplitSegment2Lines(double *x, double *y, int noPixels, int segment
 
             // 检查是否可以继续延长线段
             while (index < noPixels) {
-                // 计算当前像素到拟合线段的最小距离
                 double d = ComputeMinDistance(x[index], y[index], lastA, lastB, lastInvert);
 
                 if (d <= line_error) {
-                    // 如果距离小于误差阈值，继续延长
                     lastGoodIndex = index;
                     goodPixelCount++;
                     badPixelCount = 0;
+
+                    // 如果当前点与拟合线段的距离超过一定阈值，存储为关键点
+                    if (d > 0.3) {  // 这里设置一个较小的阈值用于筛选关键点
+                        keyPoints.push_back({x[index], y[index]});
+                    }
+
                 } else {
-                    // 如果连续 5 个像素超出误差阈值，则停止延长
                     badPixelCount++;
                     if (badPixelCount >= 5) break;
                 }
@@ -706,37 +707,37 @@ void EDLines::SplitSegment2Lines(double *x, double *y, int noPixels, int segment
                 index++;
             }
 
-            // 如果至少有两个好的像素，可以继续延长线段
             if (goodPixelCount >= 2) {
                 len += lastGoodIndex - startIndex + 1;
                 LineFit(x, y, len, lastA, lastB, lastInvert);
                 index = lastGoodIndex + 1;
             }
 
-            // 如果无法延长或没有足够的像素，结束该线段
             if (goodPixelCount < 2 || index >= noPixels) {
                 double sx, sy, ex, ey;
 
-                // 计算线段的起点
                 int index = 0;
                 while (ComputeMinDistance(x[index], y[index], lastA, lastB, lastInvert) > line_error) index++;
                 ComputeClosestPoint(x[index], y[index], lastA, lastB, lastInvert, sx, sy);
                 int noSkippedPixels = index;
 
-                // 计算线段的终点
                 index = lastGoodIndex;
                 while (ComputeMinDistance(x[index], y[index], lastA, lastB, lastInvert) > line_error) index--;
                 ComputeClosestPoint(x[index], y[index], lastA, lastB, lastInvert, ex, ey);
 
-                // 将线段加入到线段列表中
-                lines.push_back(LineSegment(lastA, lastB, lastInvert, sx, sy, ex, ey, segmentNo, firstPixelIndex + noSkippedPixels, index - noSkippedPixels + 1));
+                // 添加起点和终点为关键点
+                keyPoints.insert(keyPoints.begin(), {sx, sy});
+                keyPoints.push_back({ex, ey});
+
+                // 创建LineSegment对象并保存关键点
+                lines.push_back(LineSegment(lastA, lastB, lastInvert, sx, sy, ex, ey, segmentNo,
+                                            firstPixelIndex + noSkippedPixels, index - noSkippedPixels + 1, keyPoints));
                 linesNo++;
                 len = index + 1;
                 break;
             }
         }
 
-        // 更新剩余像素数量和指针位置，处理下一段
         noPixels -= len;
         x += len;
         y += len;

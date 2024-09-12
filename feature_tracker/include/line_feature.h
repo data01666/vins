@@ -1,3 +1,5 @@
+
+
 #include <opencv2/opencv.hpp>
 
 // SS, SE, ES, EE表示线段起点终点的方向
@@ -57,7 +59,7 @@ struct LS {
 // 线段信息结构体，用于存储线段的方程参数及其起点和终点
 struct LineSegment {
     double a, b;               // 线段方程的参数
-    int invert;                // 是否反转线段坐标系（用于处理垂直线段）
+    int invert;                // 是否反转线段坐标系
 
     double sx, sy;             // 线段起点坐标
     double ex, ey;             // 线段终点坐标
@@ -65,9 +67,9 @@ struct LineSegment {
     int segmentNo;             // 所属段编号
     int firstPixelIndex;       // 线段中的第一个像素的索引
     int len;                   // 线段的像素长度
+    std::vector<std::pair<double, double>> keyPoints; // 线段上的关键点
 
-    // 线段信息结构体的构造函数
-    LineSegment(double _a, double _b, int _invert, double _sx, double _sy, double _ex, double _ey, int _segmentNo, int _firstPixelIndex, int _len) {
+    LineSegment(double _a, double _b, int _invert, double _sx, double _sy, double _ex, double _ey, int _segmentNo, int _firstPixelIndex, int _len, std::vector<std::pair<double, double>> _keyPoints) {
         a = _a;
         b = _b;
         invert = _invert;
@@ -78,8 +80,10 @@ struct LineSegment {
         segmentNo = _segmentNo;
         firstPixelIndex = _firstPixelIndex;
         len = _len;
+        keyPoints = _keyPoints; // 存储关键点
     }
 };
+
 
 // EDLines类，用于检测和处理线段
 class EDLines {
@@ -109,7 +113,7 @@ public:
     cv::Mat drawParticularSegments(std::vector<int> list);
 
     // 获取检测出的线段
-    std::vector<LS> getLines();
+    std::vector<LineSegment> getLines();
 
 
 protected:
@@ -204,3 +208,4 @@ private:
     // 更新线段的方程参数
     static void UpdateLineParameters(LineSegment *ls);
 };
+

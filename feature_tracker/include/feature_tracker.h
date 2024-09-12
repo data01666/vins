@@ -70,6 +70,9 @@ class FeatureTracker
      * @brief 跟踪现有特征并删除失败的特征
      */
     void flowTrack();
+    void lineflowTrack();
+ double computeDTW(const std::vector<std::pair<double, double>>& prev_keypoints,
+                   const std::vector<std::pair<double, double>>& forw_keypoints);
 
     /**
      * @brief 在前向图像中跟踪新特征
