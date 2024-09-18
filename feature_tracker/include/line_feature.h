@@ -1,5 +1,3 @@
-
-
 #include <opencv2/opencv.hpp>
 
 // SS, SE, ES, EE表示线段起点终点的方向

@@ -53,13 +53,6 @@ class FeatureTracker
     FeatureTracker();
 
     /**
-     * @brief 读取图像并分析判断使用什么策略
-     * @param 输入  const cv::Mat &_img
-     * @param 输出   int pl_status; 0表示只使用点特征，1表示使用线特征，2表示使用线和点特征
-     */
-    void analyzeImage(const cv::Mat &_img, int &pl_status);
-
-    /**
      * @brief 均衡图像
      * @param 输入  const cv::Mat &_img
      * @param 输出  cv::Mat &img
@@ -71,8 +64,10 @@ class FeatureTracker
      */
     void flowTrack();
     void lineflowTrack();
- double computeDTW(const std::vector<std::pair<double, double>>& prev_keypoints,
-                   const std::vector<std::pair<double, double>>& forw_keypoints);
+    double computeDTW(const std::vector<std::pair<double, double>>& prev_keypoints,
+                      const std::vector<std::pair<double, double>>& forw_keypoints);
+    void trackNewlines();
+    void addLines();
 
     /**
      * @brief 在前向图像中跟踪新特征
@@ -128,7 +123,8 @@ class FeatureTracker
     cv::Mat mask; // 图像掩码
     cv::Mat fisheye_mask; // 鱼眼相机mask，用来去除边缘噪点
 
-    cv::Mat prev_img, cur_img, forw_img; // 上上次发布的帧的图像数据/光流跟踪的上一帧的图像数据/当前的图像数据
+    cv::Mat prev_img, cur_img, forw_img; // 上一次发布出去的帧的图像数据/光流跟踪的上一帧的图像数据/光流跟踪的当前的图像数据
+    // 完成跟踪后，把 forw 中的特征（点或线段）赋值给 cur
 
     vector<cv::Point2f> n_pts; // 每一帧中新提取的特征点
     vector<cv::Point2f> prev_pts, cur_pts, forw_pts; // 对应的图像特征点
@@ -148,11 +144,11 @@ class FeatureTracker
 
     static int n_id; // 用来作为特征点id，每检测到一个新的特征点，就将++n_id作为该特征点的id
 
-    static int pl_status; // 用来记录处理的图像的状态，0表示只使用点特征，1表示使用线特征，2表示使用线和点特征
     std::vector<LineSegment> prev_line_segments,cur_line_segments,forw_line_segments; // 对应的线特征
+    std::vector<LineSegment> line_pts; // 每一帧新提取的线特征
     // 线段的ID和跟踪次数
     vector<int> line_ids;       // 线段的ID
-    vector<int> line_track_cnt; // 线段的跟踪次数
+    static int line_n_id;      // 线段的n_id
     // 线段的速度（可以根据关键点位置计算）
     vector<cv::Point2f> line_velocity; // 每一条线段的移动速度
 };

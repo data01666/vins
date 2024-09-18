@@ -1,7 +1,7 @@
 #include "../include/feature_tracker.h"
 
 int FeatureTracker::n_id = 0;//特征点 ID 从 0 开始递增
-int FeatureTracker::pl_status = 0;//默认使用点特征
+int FeatureTracker::line_n_id = 0;//特征点 ID 从 0 开始递增
 
 bool inBorder(const cv::Point2f &pt)
 {
@@ -29,28 +29,18 @@ void reduceVector(vector<int> &v, vector<uchar> status)
     v.resize(j);
 }
 
+void reduceVector(vector<LineSegment> &v, vector<uchar> &status)
+{
+    int j = 0;
+    for (int i = 0; i < int(v.size()); i++)
+        if (status[i])
+            v[j++] = v[i];
+    v.resize(j);
+}
+
 
 // the following function belongs to FeatureTracker Class
 FeatureTracker::FeatureTracker() {}
-
-// 分析场景亮度和纹理复杂度，根据预设的阈值和区间分配，选择不同的策略
-void FeatureTracker::analyzeImage(const cv::Mat &image, int &strategy) {
-    // 计算图像的亮度
-    cv::Scalar mean_val = cv::mean(image);
-    double brightness = mean_val[0];
-
-    // 计算纹理复杂度（通过拉普拉斯变换）
-    cv::Mat laplace;
-    cv::Laplacian(image, laplace, CV_64F);
-    cv::Scalar laplace_mean, laplace_stddev;
-    cv::meanStdDev(laplace, laplace_mean, laplace_stddev);
-    double texture_complexity = laplace_stddev[0];
-    strategy = 0;  // 默认使用点特征
-    // 根据预设的阈值和区间分配，选择不同的策略
-    if (brightness < 50 && texture_complexity < 10) {
-        strategy = 1;  // 低光照、低纹理，使用线特征
-    }
-}
 
 void FeatureTracker::equalize(const cv::Mat &_img,cv::Mat &img)
 {
@@ -76,7 +66,7 @@ void FeatureTracker::flowTrack()
         vector<uchar> status;
         vector<float> err;
         // calcOpticalFlowPyrLK函数，它是Pyramidal Lucas-Kanade光流算法的实现
-        // cur_img：当前图像帧; forw_img：下一帧; cur_pts：当前特征点; forw_pts：下一帧特征点;
+        // cur_img：当前图像帧; forw_img：下一帧; cur_pts：当前特征点; forw_pts：输出参数：下一帧特征点;
         // status：输出参数，特征点是否被成功跟踪; err：输出参数，特征点跟踪误差
         // cv::Size(21, 21)：光流窗口大小; 3：金字塔的层数
         cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts, forw_pts, status, err, cv::Size(21, 21), 3);
@@ -93,52 +83,84 @@ void FeatureTracker::flowTrack()
         ROS_DEBUG("temporal optical flow costs: %fms", t_o.toc());
     }
 }
+
 void FeatureTracker::lineflowTrack()
 {
-    // 判断是否有线特征
-    if (prev_line_segments.size() > 0)
+    if (cur_line_segments.size() > 0)
     {
         TicToc t_o;
+        std::vector<uchar> status; // 用于记录每条线段的状态
 
-        // 遍历每条线段
-        for (int i = 0; i < prev_line_segments.size(); i++)
+        for (int i = 0; i < cur_line_segments.size(); i++)
         {
-            std::vector<cv::Point2f> prev_keypoints;
+            std::vector<cv::Point2f> cur_keypoints;
 
-            // 将关键点从 std::pair 转换为 cv::Point2f
-            for (const auto& kp : prev_line_segments[i].keyPoints)
+            // 将当前帧线段关键点从 std::pair 转换为 cv::Point2f
+            for (const auto& kp : cur_line_segments[i].keyPoints)
             {
-                prev_keypoints.push_back(cv::Point2f(static_cast<float>(kp.first), static_cast<float>(kp.second)));
+                cur_keypoints.push_back(cv::Point2f(static_cast<float>(kp.first), static_cast<float>(kp.second)));
             }
 
             std::vector<cv::Point2f> forw_keypoints;
-            std::vector<uchar> status;
             std::vector<float> err;
 
-            // 对前一帧的线段关键点进行光流跟踪
-            cv::calcOpticalFlowPyrLK(prev_img, forw_img, prev_keypoints, forw_keypoints, status, err, cv::Size(21, 21), 3);
+            // 对当前帧的线段关键点进行光流跟踪
+            cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_keypoints, forw_keypoints, status, err, cv::Size(21, 21), 3);
 
-            // 筛选有效的跟踪结果
-            std::vector<std::pair<double, double>> tracked_keypoints;
+            // 判断关键点跟踪成功率
+            int tracked_count = 0;
             for (int j = 0; j < status.size(); j++)
             {
                 if (status[j])
-                {
-                    tracked_keypoints.push_back({ forw_keypoints[j].x, forw_keypoints[j].y });
-                }
+                    tracked_count++;
             }
 
-            // 更新当前帧的线段关键点
-            forw_line_segments[i].keyPoints = tracked_keypoints;
+            double success_ratio = (double)tracked_count / cur_keypoints.size();
+
+            if (success_ratio > 0.7)  // 设定阈值，至少70%的关键点被成功跟踪
+            {
+                std::vector<std::pair<double, double>> tracked_keypoints;
+                for (int j = 0; j < status.size(); j++)
+                {
+                    if (status[j])
+                    {
+                        tracked_keypoints.push_back({ forw_keypoints[j].x, forw_keypoints[j].y });
+                    }
+                }
+                forw_line_segments[i].keyPoints = tracked_keypoints;
+
+                // 计算DTW误差来进一步验证线段匹配
+                double dtw_distance = computeDTW(cur_line_segments[i].keyPoints, forw_line_segments[i].keyPoints);
+                double DTW_THRESHOLD = 1.5;
+                if (dtw_distance > DTW_THRESHOLD)
+                {
+                    // 如果DTW距离较大，标记为无效
+                    status[i] = 0;
+                }
+            }
+            else
+            {
+                // 如果成功率太低，标记为无效
+                status[i] = 0;
+            }
         }
+
+        // 根据跟踪状态更新线段
+        reduceVector(prev_line_segments, status);
+        reduceVector(cur_line_segments, status);
+        reduceVector(forw_line_segments, status);
+        reduceVector(line_ids, status);
 
         ROS_DEBUG("line optical flow tracking costs: %fms", t_o.toc());
     }
 }
-double FeatureTracker::computeDTW(const std::vector<std::pair<double, double>>& prev_keypoints,
+
+
+
+double FeatureTracker::computeDTW(const std::vector<std::pair<double, double>>& cur_keypoints,
                                   const std::vector<std::pair<double, double>>& forw_keypoints)
 {
-    int n = prev_keypoints.size();
+    int n = cur_keypoints.size();
     int m = forw_keypoints.size();
 
     // 创建 DTW 距离矩阵
@@ -152,8 +174,8 @@ double FeatureTracker::computeDTW(const std::vector<std::pair<double, double>>& 
     {
         for (int j = 1; j <= m; j++)
         {
-            double cost = sqrt(pow(prev_keypoints[i - 1].first - forw_keypoints[j - 1].first, 2) +
-                               pow(prev_keypoints[i - 1].second - forw_keypoints[j - 1].second, 2));
+            double cost = sqrt(pow(cur_keypoints[i - 1].first - forw_keypoints[j - 1].first, 2) +
+                               pow(cur_keypoints[i - 1].second - forw_keypoints[j - 1].second, 2));
 
             dtw[i][j] = cost + std::min({ dtw[i - 1][j], dtw[i][j - 1], dtw[i - 1][j - 1] });
         }
@@ -162,8 +184,6 @@ double FeatureTracker::computeDTW(const std::vector<std::pair<double, double>>& 
     // 返回最终的 DTW 距离
     return dtw[n][m];
 }
-
-
 
 void FeatureTracker::trackNew()
 {
@@ -202,8 +222,53 @@ void FeatureTracker::trackNew()
 
         ROS_DEBUG("add feature begins");
         TicToc t_a;
-        addPoints();
+            addPoints();
         ROS_DEBUG("selectFeature costs: %fms", t_a.toc());
+    }
+}
+
+// 设置线特征的遮罩，并且添加新的线段
+void FeatureTracker::trackNewlines()
+{
+    // 当需要在当前帧中发布数据时才执行基础的特征线筛选与跟踪操作
+    if (PUB_THIS_FRAME)
+    {
+        // 遮罩初始化
+        if (FISHEYE)
+            mask = fisheye_mask.clone();
+        else
+            mask = cv::Mat(ROW, COL, CV_8UC1, cv::Scalar(255)); // 初始化遮罩
+
+        ROS_DEBUG("detect new line features begins");
+        TicToc t_l;
+
+        // 使用 EDLines 检测新线段
+        EDLines lines = EDLines(forw_img);
+        line_pts = lines.getLines(); // 将检测到的新线段加入到 line_pts 中
+
+        // 设置遮罩并筛选线段
+        for (auto &new_line : line_pts)
+        {
+            // 获取线段的起点和终点
+            cv::Point2f start(static_cast<float>(new_line.sx), static_cast<float>(new_line.sy));
+            cv::Point2f end(static_cast<float>(new_line.ex), static_cast<float>(new_line.ey));
+
+            // 判断起点和终点是否在遮罩区域内
+            if (mask.at<uchar>(start) == 255 && mask.at<uchar>(end) == 255)
+            {
+                // 如果该线段的起点和终点均未被遮罩占用，将其加入当前帧的线段集合
+                forw_line_segments.push_back(new_line);
+
+                // 在遮罩中对该线段的起点和终点画圈，占用此区域，防止新线段重叠
+                cv::circle(mask, start, MIN_DIST, 0, -1);
+                cv::circle(mask, end, MIN_DIST, 0, -1);
+
+                // 记录线段的 ID
+                line_ids.push_back(-1);
+            }
+        }
+
+        ROS_DEBUG("detect new line features costs: %fms", t_l.toc());
     }
 }
 
@@ -274,9 +339,6 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
     TicToc t_r;
     cur_time = _cur_time;
 
-    // 场景分析，决定使用点、线特征或两者结合
-    analyzeImage(_img, pl_status);
-
     // 图像直方图均衡化
     equalize(_img, img);
 
@@ -289,62 +351,36 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         forw_img = img;
     }
 
+    // 清空当前帧的特征点和线段
+    forw_pts.clear();
+    forw_line_segments.clear();
 
-    if (pl_status == 0) // 默认使用点特征
-    {
-        forw_pts.clear();
-        flowTrack();
+    // 点特征的光流跟踪
+    flowTrack();
 
-        // 已跟踪的特征点计数器加一
-        for (auto &n : track_cnt)
-            n++;
+    // 已跟踪的点特征计数器加一
+    for (auto &n : track_cnt)
+        n++;
 
-        trackNew();
+    // 线特征的光流跟踪
+    lineflowTrack();
 
-        prev_img = cur_img;
-        prev_pts = cur_pts;
-        prev_un_pts = cur_un_pts;
-        cur_img = forw_img;
-        cur_pts = forw_pts;
+    // 提取新的点和线特征
+    trackNew();
+    trackNewlines();
 
-        // 特征点去畸变
-        undistortedPoints();
-        prev_time = cur_time;
-    }
-    else if (pl_status == 1) // 使用线特征
-    {
-        forw_line_segments.clear();
+    // 更新上一帧的图像和特征信息
+    prev_img = cur_img;
+    prev_pts = cur_pts;
+    prev_un_pts = cur_un_pts;
+    prev_line_segments = cur_line_segments;
+    cur_img = forw_img;
+    cur_pts = forw_pts;
+    cur_line_segments = forw_line_segments;
 
-        // 检测线特征
-        EDLines lines = EDLines(forw_img);
-
-        // 将检测到的线段信息存入 forw_line_segments 中
-        forw_line_segments = lines.getLines();
-        lineflowTrack();
-
-        // 线段匹配（使用 DTW 算法）
-        for (int i = 0; i < prev_line_segments.size(); i++)
-        {
-            // DTW 算法用于前后帧的线段匹配，可以根据关键点序列计算最优匹配路径
-            double dtw_distance = computeDTW(prev_line_segments[i].keyPoints, forw_line_segments[i].keyPoints);
-            // 处理匹配结果，例如更新线段位置信息或剔除不良匹配
-            double SOME_THRESHOLD = 1.5;
-            if (dtw_distance < SOME_THRESHOLD) {
-                // 如果DTW匹配的距离较小，认为匹配成功，更新线段位置信息
-                // 例如，更新线段的关键点位置或者删除不良的线段
-            } else {
-                // 如果DTW距离较大，剔除不可靠的线段匹配
-                forw_line_segments.erase(forw_line_segments.begin() + i);
-            }
-        }
-
-        // 保存当前帧的线特征，用于下一帧的匹配
-        prev_line_segments = forw_line_segments;
-
-        prev_img = cur_img;
-        cur_img = forw_img;
-        prev_time = cur_time;
-    }
+    // 特征点去畸变
+    undistortedPoints();
+    prev_time = cur_time;
 }
 
 // 通过基础矩阵（Fundamental Matrix）和RANSAC算法对特征点匹配进行筛选

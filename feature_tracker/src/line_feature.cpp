@@ -650,7 +650,7 @@ int EDLines::ComputeMinLineLength() {
  * @param segmentNo 段的编号
  */
 void EDLines::SplitSegment2Lines(double *x, double *y, int noPixels, int segmentNo) {
-
+    // 第一个像素的索引
     int firstPixelIndex = 0;
 
     // 当剩余像素数量大于等于最小线段长度时，开始分割
@@ -716,11 +716,13 @@ void EDLines::SplitSegment2Lines(double *x, double *y, int noPixels, int segment
             if (goodPixelCount < 2 || index >= noPixels) {
                 double sx, sy, ex, ey;
 
+                // 计算线段的起点
                 int index = 0;
                 while (ComputeMinDistance(x[index], y[index], lastA, lastB, lastInvert) > line_error) index++;
                 ComputeClosestPoint(x[index], y[index], lastA, lastB, lastInvert, sx, sy);
                 int noSkippedPixels = index;
 
+                // 计算线段的终点
                 index = lastGoodIndex;
                 while (ComputeMinDistance(x[index], y[index], lastA, lastB, lastInvert) > line_error) index--;
                 ComputeClosestPoint(x[index], y[index], lastA, lastB, lastInvert, ex, ey);
@@ -729,7 +731,23 @@ void EDLines::SplitSegment2Lines(double *x, double *y, int noPixels, int segment
                 keyPoints.insert(keyPoints.begin(), {sx, sy});
                 keyPoints.push_back({ex, ey});
 
-                // 创建LineSegment对象并保存关键点
+                // 自适应调整关键点数量
+                size_t totalPoints = keyPoints.size();
+                size_t maxPoints = std::max(5, int(len / 10)); // 根据线段长度自适应关键点数量, 最少5个点
+
+                if (totalPoints > maxPoints) {
+                    std::vector<std::pair<double, double>> sampledKeyPoints;
+                    double step = double(totalPoints) / maxPoints;
+                    for (size_t i = 0; i < maxPoints; ++i) {
+                        sampledKeyPoints.push_back(keyPoints[int(i * step)]);
+                    }
+                    keyPoints = sampledKeyPoints; // 替换为均匀采样后的关键点
+                }
+            	// 按照 x 坐标从小到大排序
+            	std::sort(keyPoints.begin(), keyPoints.end(), [](const std::pair<double, double>& a, const std::pair<double, double>& b) {
+            		return a.first < b.first; });
+
+                // 创建 LineSegment 对象并保存关键点
                 lines.push_back(LineSegment(lastA, lastB, lastInvert, sx, sy, ex, ey, segmentNo,
                                             firstPixelIndex + noSkippedPixels, index - noSkippedPixels + 1, keyPoints));
                 linesNo++;
