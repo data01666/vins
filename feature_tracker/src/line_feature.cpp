@@ -245,258 +245,555 @@ void EDLines::ComputeAnchorPoints()
 	anchorNos = anchorPoints.size();
 }
 
-void EDLines::JoinAnchorPointsUsingSortedAnchors() {
-    // 分配内存用于存储链信息和像素点
-    int *chainNos = new int[(width + height) * 8];
-    Point *pixels = new Point[width * height];
-    StackNode *stack = new StackNode[width * height];
-    Chain *chains = new Chain[width * height];
+void EDLines::JoinAnchorPointsUsingSortedAnchors()
+{
+	int *chainNos = new int[(width + height) * 8];
 
-    // 对锚点进行排序，按照梯度值降序排列
-    int *A = sortAnchorsByGradValue1();
+	Point *pixels = new Point[width*height];
+	StackNode *stack = new StackNode[width*height];
+	Chain *chains = new Chain[width*height];
 
-    int totalPixels = 0; // 累计总像素数
+	// сортируем опорные точки по убыванию градиента в них
+	int *A = sortAnchorsByGradValue1();
 
-    // 从锚点中取出最大梯度点开始进行链的扩展
-    for (int k = anchorNos - 1; k >= 0; k--) {
-        int pixelOffset = A[k];
-        int i = pixelOffset / width;
-        int j = pixelOffset % width;
+	// соединяем опорные точки начиная с наибольших значений градиента
+	int totalPixels = 0;
 
-        if (edgeImg[i * width + j] != ANCHOR_PIXEL) continue; // 跳过非锚点像素
+	for (int k = anchorNos - 1; k >= 0; k--) {
+		int pixelOffset = A[k];
 
-        // 初始化链
-        chains[0].len = 0;
-        chains[0].parent = -1;
-        chains[0].dir = 0;
-        chains[0].children[0] = chains[0].children[1] = -1;
-        chains[0].pixels = nullptr;
+		int i = pixelOffset / width;
+		int j = pixelOffset % width;
 
-        int noChains = 1; // 当前链数
-        int len = 0;      // 当前像素链长度
-        int duplicatePixelCount = 0;
-        int top = -1;     // 栈顶指针
 
-        // 根据边缘方向初始化栈，向上下或左右方向扩展
-        if (dirImg[i * width + j] == EDGE_VERTICAL) {
-            stack[++top] = { i, j, DOWN, 0 };
-            stack[++top] = { i, j, UP, 0 };
-        } else {
-            stack[++top] = { i, j, RIGHT, 0 };
-            stack[++top] = { i, j, LEFT, 0 };
-        }
+		if (edgeImg[i*width + j] != ANCHOR_PIXEL) continue;
 
-        // 开始扩展链条
-        while (top >= 0) {
-            StackNode current = stack[top--];
-            int r = current.r, c = current.c, dir = current.dir, parent = current.parent;
+		chains[0].len = 0;
+		chains[0].parent = -1;
+		chains[0].dir = 0;
+		chains[0].children[0] = chains[0].children[1] = -1;
+		chains[0].pixels = NULL;
 
-            if (edgeImg[r * width + c] != EDGE_PIXEL) duplicatePixelCount++;
 
-            // 新建链
-            chains[noChains].dir = dir;
-            chains[noChains].parent = parent;
-            chains[noChains].children[0] = chains[noChains].children[1] = -1;
-            chains[noChains].pixels = &pixels[len];
+		int noChains = 1;
+		int len = 0;
+		int duplicatePixelCount = 0;
+		int top = -1;  // вершина стека
 
-            pixels[len++] = { c, r }; // 添加像素到当前链
-            int chainLen = 1;
+		if (dirImg[i*width + j] == EDGE_VERTICAL) {
+			stack[++top].r = i;
+			stack[top].c = j;
+			stack[top].dir = DOWN;
+			stack[top].parent = 0;
 
-            // 根据当前方向向前扩展
-            if (dir == LEFT || dir == RIGHT) {
-                while (dirImg[r * width + c] == EDGE_HORIZONTAL) {
-                    edgeImg[r * width + c] = EDGE_PIXEL;
-                    cleanVerticalNeighbors(r, c); // 清除垂直方向的锚点
-                    if (!findNextHorizontalPixel(r, c, dir)) break; // 寻找下一个像素
+			stack[++top].r = i;
+			stack[top].c = j;
+			stack[top].dir = UP;
+			stack[top].parent = 0;
 
-                    pixels[len++] = { c, r };
-                    chainLen++;
-                }
-                if (dir == LEFT) {
-                    pushVerticalChainsToStack(stack, top, r, c, noChains);
-                } else {
-                    pushVerticalChainsToStack(stack, top, r, c, noChains);
-                }
-            } else { // 处理垂直方向的链扩展
-                while (dirImg[r * width + c] == EDGE_VERTICAL) {
-                    edgeImg[r * width + c] = EDGE_PIXEL;
-                    cleanHorizontalNeighbors(r, c); // 清除水平方向的锚点
-                    if (!findNextVerticalPixel(r, c, dir)) break; // 寻找下一个像素
-
-                    pixels[len++] = { c, r };
-                    chainLen++;
-                }
-                pushHorizontalChainsToStack(stack, top, r, c, noChains);
-            }
-
-            chains[noChains].len = chainLen;
-            if (dir == LEFT || dir == UP) chains[parent].children[0] = noChains;
-            else chains[parent].children[1] = noChains;
-            noChains++;
-        }
-
-        // 清除短链，确保链条足够长
-        if (len - duplicatePixelCount < minPathLen) {
-            for (int l = 0; l < len; l++) {
-                edgeImg[pixels[l].y * width + pixels[l].x] = 0; // 清除短链
-            }
-        } else {
-            // 处理链条并移除多余的像素点
-            processChainsAndRemoveRedundantPixels(chains, chainNos, noChains);
-        }
-    }
-
-    // 删除最后一个空的段
-    segmentPoints.pop_back();
-
-    // 释放内存
-    delete[] A;
-    delete[] chains;
-    delete[] stack;
-    delete[] chainNos;
-    delete[] pixels;
-}
-
-// 辅助函数，用于清理垂直方向的锚点
-void EDLines::cleanVerticalNeighbors(int r, int c) {
-    if (edgeImg[(r - 1) * width + c] == ANCHOR_PIXEL) edgeImg[(r - 1) * width + c] = 0;
-    if (edgeImg[(r + 1) * width + c] == ANCHOR_PIXEL) edgeImg[(r + 1) * width + c] = 0;
-}
-
-// 辅助函数，用于清理水平方向的锚点
-void EDLines::cleanHorizontalNeighbors(int r, int c) {
-    if (edgeImg[r * width + c - 1] == ANCHOR_PIXEL) edgeImg[r * width + c - 1] = 0;
-    if (edgeImg[r * width + c + 1] == ANCHOR_PIXEL) edgeImg[r * width + c + 1] = 0;
-}
-
-// 辅助函数，用于寻找水平方向的下一个像素
-bool EDLines::findNextHorizontalPixel(int &r, int &c, int dir) {
-	if (dir == LEFT) {
-		// 向左寻找下一个像素
-		if (edgeImg[r * width + c - 1] >= ANCHOR_PIXEL) {
-			c--;
-		} else if (edgeImg[(r - 1) * width + c - 1] >= ANCHOR_PIXEL) {
-			r--; c--;
-		} else if (edgeImg[(r + 1) * width + c - 1] >= ANCHOR_PIXEL) {
-			r++; c--;
-		} else {
-			// 寻找左侧梯度最大的像素
-			int A = gradImg[(r - 1) * width + c - 1];
-			int B = gradImg[r * width + c - 1];
-			int C = gradImg[(r + 1) * width + c - 1];
-
-			if (A > B) {
-				if (A > C) r--;
-				else       r++;
-			} else if (C > B) r++;
-			c--;
 		}
-	} else if (dir == RIGHT) {
-		// 向右寻找下一个像素
-		if (edgeImg[r * width + c + 1] >= ANCHOR_PIXEL) {
-			c++;
-		} else if (edgeImg[(r + 1) * width + c + 1] >= ANCHOR_PIXEL) {
-			r++; c++;
-		} else if (edgeImg[(r - 1) * width + c + 1] >= ANCHOR_PIXEL) {
-			r--; c++;
-		} else {
-			// 寻找右侧梯度最大的像素
-			int A = gradImg[(r - 1) * width + c + 1];
-			int B = gradImg[r * width + c + 1];
-			int C = gradImg[(r + 1) * width + c + 1];
+		else {
+			stack[++top].r = i;
+			stack[top].c = j;
+			stack[top].dir = RIGHT;
+			stack[top].parent = 0;
 
-			if (A > B) {
-				if (A > C) r--;
-				else       r++;
-			} else if (C > B) r++;
-			c++;
-		}
-	}
-	// 返回是否找到有效的像素
-	return (edgeImg[r * width + c] != EDGE_PIXEL && gradImg[r * width + c] >= gradThresh);
-}
+			stack[++top].r = i;
+			stack[top].c = j;
+			stack[top].dir = LEFT;
+			stack[top].parent = 0;
+		} //end-else
 
-// 辅助函数，用于寻找垂直方向的下一个像素
-bool EDLines::findNextVerticalPixel(int &r, int &c, int dir) {
-	if (dir == UP) {
-		// 向上寻找下一个像素
-		if (edgeImg[(r - 1) * width + c] >= ANCHOR_PIXEL) {
-			r--;
-		} else if (edgeImg[(r - 1) * width + c - 1] >= ANCHOR_PIXEL) {
-			r--; c--;
-		} else if (edgeImg[(r - 1) * width + c + 1] >= ANCHOR_PIXEL) {
-			r--; c++;
-		} else {
-			// 寻找上方梯度最大的像素
-			int A = gradImg[(r - 1) * width + c - 1];
-			int B = gradImg[(r - 1) * width + c];
-			int C = gradImg[(r - 1) * width + c + 1];
+		  // пока стек не пуст
+	StartOfWhile:
+		while (top >= 0) {
+			int r = stack[top].r;
+			int c = stack[top].c;
+			int dir = stack[top].dir;
+			int parent = stack[top].parent;
+			top--;
 
-			if (A > B) {
-				if (A > C) c--;
-				else       c++;
-			} else if (C > B) c++;
-			r--;
-		}
-	} else if (dir == DOWN) {
-		// 向下寻找下一个像素
-		if (edgeImg[(r + 1) * width + c] >= ANCHOR_PIXEL) {
-			r++;
-		} else if (edgeImg[(r + 1) * width + c + 1] >= ANCHOR_PIXEL) {
-			r++; c++;
-		} else if (edgeImg[(r + 1) * width + c - 1] >= ANCHOR_PIXEL) {
-			r++; c--;
-		} else {
-			// 寻找下方梯度最大的像素
-			int A = gradImg[(r + 1) * width + c - 1];
-			int B = gradImg[(r + 1) * width + c];
-			int C = gradImg[(r + 1) * width + c + 1];
+			if (edgeImg[r*width + c] != EDGE_PIXEL) duplicatePixelCount++;
 
-			if (A > B) {
-				if (A > C) c--;
-				else       c++;
-			} else if (C > B) c++;
-			r++;
-		}
-	}
-	// 返回是否找到有效的像素
-	return (edgeImg[r * width + c] != EDGE_PIXEL && gradImg[r * width + c] >= gradThresh);
-}
+			chains[noChains].dir = dir;   // traversal direction
+			chains[noChains].parent = parent;
+			chains[noChains].children[0] = chains[noChains].children[1] = -1;
 
-// 辅助函数，将水平链推入栈
-void EDLines::pushHorizontalChainsToStack(StackNode *stack, int &top, int r, int c, int chainNo) {
-    stack[++top] = { r, c, LEFT, chainNo };
-    stack[++top] = { r, c, RIGHT, chainNo };
-}
 
-// 辅助函数，将垂直链推入栈
-void EDLines::pushVerticalChainsToStack(StackNode *stack, int &top, int r, int c, int chainNo) {
-    stack[++top] = { r, c, UP, chainNo };
-    stack[++top] = { r, c, DOWN, chainNo };
-}
+			int chainLen = 0;
 
-// 辅助函数，处理链并删除冗余像素
-void EDLines::processChainsAndRemoveRedundantPixels(Chain *chains, int *chainNos, int noChains) {
-	// 循环处理每条链，找到最长链并移除冗余像素
-	for (int k = 0; k < noChains; k++) {
-		// 获取链长度
-		int totalLen = LongestChain(chains, chains[k].parent);
-		if (totalLen > minPathLen) {
-			// 处理链条像素
-			int count = RetrieveChainNos(chains, chains[k].parent, chainNos);
-			for (int l = count - 1; l >= 0; l--) {
-				int chainNo = chainNos[l];
-				// 删除冗余像素
-				int fr = chains[chainNo].pixels[0].y;
-				int fc = chains[chainNo].pixels[0].x;
-				if (abs(fr - chains[chainNo].pixels[1].y) <= 1 &&
-					abs(fc - chains[chainNo].pixels[1].x) <= 1) {
-					chains[chainNo].len--; // 删除像素
+			chains[noChains].pixels = &pixels[len];
+
+			pixels[len].y = r;
+			pixels[len].x = c;
+			len++;
+			chainLen++;
+
+			if (dir == LEFT) {
+				while (dirImg[r*width + c] == EDGE_HORIZONTAL) {
+					edgeImg[r*width + c] = EDGE_PIXEL;
+
+					// Грань горизонтальная. Направлена влево
+					//
+					//   A
+					//   B x
+					//   C
+					//
+					// очищаем верхний и нижний пиксели
+					if (edgeImg[(r - 1)*width + c] == ANCHOR_PIXEL) edgeImg[(r - 1)*width + c] = 0;
+					if (edgeImg[(r + 1)*width + c] == ANCHOR_PIXEL) edgeImg[(r + 1)*width + c] = 0;
+
+					// ищем пиксель на грани среди соседей
+					if (edgeImg[r*width + c - 1] >= ANCHOR_PIXEL) { c--; }
+					else if (edgeImg[(r - 1)*width + c - 1] >= ANCHOR_PIXEL) { r--; c--; }
+					else if (edgeImg[(r + 1)*width + c - 1] >= ANCHOR_PIXEL) { r++; c--; }
+					else {
+						// иначе -- идем в максимальный по градиенту пиксель СЛЕВА
+						int A = gradImg[(r - 1)*width + c - 1];
+						int B = gradImg[r*width + c - 1];
+						int C = gradImg[(r + 1)*width + c - 1];
+
+						if (A > B) {
+							if (A > C) r--;
+							else       r++;
+						}
+						else  if (C > B) r++;
+						c--;
 					}
+
+					if (edgeImg[r*width + c] == EDGE_PIXEL || gradImg[r*width + c] < gradThresh) {
+						if (chainLen > 0) {
+							chains[noChains].len = chainLen;
+							chains[parent].children[0] = noChains;
+							noChains++;
+						}
+						goto StartOfWhile;
+					}
+
+
+					pixels[len].y = r;
+					pixels[len].x = c;
+					len++;
+					chainLen++;
+				}
+
+				stack[++top].r = r;
+				stack[top].c = c;
+				stack[top].dir = DOWN;
+				stack[top].parent = noChains;
+
+				stack[++top].r = r;
+				stack[top].c = c;
+				stack[top].dir = UP;
+				stack[top].parent = noChains;
+
+				len--;
+				chainLen--;
+
+				chains[noChains].len = chainLen;
+				chains[parent].children[0] = noChains;
+				noChains++;
+
 			}
+			else if (dir == RIGHT) {
+				while (dirImg[r*width + c] == EDGE_HORIZONTAL) {
+					edgeImg[r*width + c] = EDGE_PIXEL;
+
+					// Грань горизонтальная. Направлена вправо
+					//
+					//     A
+					//   x B
+					//     C
+					//
+					// очищаем верхний и нижний пиксели
+					if (edgeImg[(r + 1)*width + c] == ANCHOR_PIXEL) edgeImg[(r + 1)*width + c] = 0;
+					if (edgeImg[(r - 1)*width + c] == ANCHOR_PIXEL) edgeImg[(r - 1)*width + c] = 0;
+
+					// ищем пиксель на грани среди соседей
+					if (edgeImg[r*width + c + 1] >= ANCHOR_PIXEL) { c++; }
+					else if (edgeImg[(r + 1)*width + c + 1] >= ANCHOR_PIXEL) { r++; c++; }
+					else if (edgeImg[(r - 1)*width + c + 1] >= ANCHOR_PIXEL) { r--; c++; }
+					else {
+						// иначе -- идем в максимальный по градиенту пиксель СПРАВА
+						int A = gradImg[(r - 1)*width + c + 1];
+						int B = gradImg[r*width + c + 1];
+						int C = gradImg[(r + 1)*width + c + 1];
+
+						if (A > B) {
+							if (A > C) r--;       // A
+							else       r++;       // C
+						}
+						else if (C > B) r++;  // C
+						c++;
+					}
+
+					if (edgeImg[r*width + c] == EDGE_PIXEL || gradImg[r*width + c] < gradThresh) {
+						if (chainLen > 0) {
+							chains[noChains].len = chainLen;
+							chains[parent].children[1] = noChains;
+							noChains++;
+						}
+						goto StartOfWhile;
+					}
+
+
+					pixels[len].y = r;
+					pixels[len].x = c;
+					len++;
+					chainLen++;
+				}
+
+				stack[++top].r = r;
+				stack[top].c = c;
+				stack[top].dir = DOWN;
+				stack[top].parent = noChains;
+
+				stack[++top].r = r;
+				stack[top].c = c;
+				stack[top].dir = UP;
+				stack[top].parent = noChains;
+
+				len--;
+				chainLen--;
+
+				chains[noChains].len = chainLen;
+				chains[parent].children[1] = noChains;
+				noChains++;
+
+			}
+			else if (dir == UP) {
+				while (dirImg[r*width + c] == EDGE_VERTICAL) {
+					edgeImg[r*width + c] = EDGE_PIXEL;
+
+					// Грань вертикальная. Направлена вверх
+					//
+					//   A B C
+					//     x
+					//
+					// очищаем левый и правый пиксели
+					if (edgeImg[r*width + c - 1] == ANCHOR_PIXEL) edgeImg[r*width + c - 1] = 0;
+					if (edgeImg[r*width + c + 1] == ANCHOR_PIXEL) edgeImg[r*width + c + 1] = 0;
+
+					// ищем пиксель на грани среди соседей
+					if (edgeImg[(r - 1)*width + c] >= ANCHOR_PIXEL) { r--; }
+					else if (edgeImg[(r - 1)*width + c - 1] >= ANCHOR_PIXEL) { r--; c--; }
+					else if (edgeImg[(r - 1)*width + c + 1] >= ANCHOR_PIXEL) { r--; c++; }
+					else {
+						// иначе -- идем в максимальный по градиенту пиксель ВВЕРХ
+						int A = gradImg[(r - 1)*width + c - 1];
+						int B = gradImg[(r - 1)*width + c];
+						int C = gradImg[(r - 1)*width + c + 1];
+
+						if (A > B) {
+							if (A > C) c--;
+							else       c++;
+						}
+						else if (C > B) c++;
+						r--;
+					}
+
+					if (edgeImg[r*width + c] == EDGE_PIXEL || gradImg[r*width + c] < gradThresh) {
+						if (chainLen > 0) {
+							chains[noChains].len = chainLen;
+							chains[parent].children[0] = noChains;
+							noChains++;
+						}
+						goto StartOfWhile;
+					}
+
+
+					pixels[len].y = r;
+					pixels[len].x = c;
+
+					len++;
+					chainLen++;
+				}
+
+				stack[++top].r = r;
+				stack[top].c = c;
+				stack[top].dir = RIGHT;
+				stack[top].parent = noChains;
+
+				stack[++top].r = r;
+				stack[top].c = c;
+				stack[top].dir = LEFT;
+				stack[top].parent = noChains;
+
+				len--;
+				chainLen--;
+
+				chains[noChains].len = chainLen;
+				chains[parent].children[0] = noChains;
+				noChains++;
+
+			}
+			else {
+				while (dirImg[r*width + c] == EDGE_VERTICAL) {
+					edgeImg[r*width + c] = EDGE_PIXEL;
+
+					// Грань вертикальная. Направлена вниз
+					//
+					//     x
+					//   A B C
+					//
+					// очищаем пиксле слева и справа
+					if (edgeImg[r*width + c + 1] == ANCHOR_PIXEL) edgeImg[r*width + c + 1] = 0;
+					if (edgeImg[r*width + c - 1] == ANCHOR_PIXEL) edgeImg[r*width + c - 1] = 0;
+
+					// ищем пиксель на грани среди соседей
+					if (edgeImg[(r + 1)*width + c] >= ANCHOR_PIXEL) { r++; }
+					else if (edgeImg[(r + 1)*width + c + 1] >= ANCHOR_PIXEL) { r++; c++; }
+					else if (edgeImg[(r + 1)*width + c - 1] >= ANCHOR_PIXEL) { r++; c--; }
+					else {
+						// иначе -- идем в максимальный по градиенту пиксель ВНИЗУ
+						int A = gradImg[(r + 1)*width + c - 1];
+						int B = gradImg[(r + 1)*width + c];
+						int C = gradImg[(r + 1)*width + c + 1];
+
+						if (A > B) {
+							if (A > C) c--;       // A
+							else       c++;       // C
+						}
+						else if (C > B) c++;  // C
+						r++;
+					}
+
+					if (edgeImg[r*width + c] == EDGE_PIXEL || gradImg[r*width + c] < gradThresh) {
+						if (chainLen > 0) {
+							chains[noChains].len = chainLen;
+							chains[parent].children[1] = noChains;
+							noChains++;
+						}
+						goto StartOfWhile;
+					}
+
+					pixels[len].y = r;
+					pixels[len].x = c;
+
+					len++;
+					chainLen++;
+				}
+
+				stack[++top].r = r;
+				stack[top].c = c;
+				stack[top].dir = RIGHT;
+				stack[top].parent = noChains;
+
+				stack[++top].r = r;
+				stack[top].c = c;
+				stack[top].dir = LEFT;
+				stack[top].parent = noChains;
+
+				len--;
+				chainLen--;
+
+				chains[noChains].len = chainLen;
+				chains[parent].children[1] = noChains;
+				noChains++;
+			}
+
 		}
+
+
+		if (len - duplicatePixelCount < minPathLen) {
+			for (int k = 0; k<len; k++) {
+
+				edgeImg[pixels[k].y*width + pixels[k].x] = 0;
+				edgeImg[pixels[k].y*width + pixels[k].x] = 0;
+
+			}
+
+		}
+		else {
+
+			int noSegmentPixels = 0;
+
+			int totalLen = LongestChain(chains, chains[0].children[1]);
+
+			if (totalLen > 0) {
+				int count = RetrieveChainNos(chains, chains[0].children[1], chainNos);
+
+				// копируем пиксели в обратном порядке
+				for (int k = count - 1; k >= 0; k--) {
+					int chainNo = chainNos[k];
+
+                    /* Пробуем удалить лишние пиксели */
+
+                    int fr = chains[chainNo].pixels[chains[chainNo].len - 1].y;
+                    int fc = chains[chainNo].pixels[chains[chainNo].len - 1].x;
+
+                    int index = noSegmentPixels - 2;
+                    while (index >= 0) {
+                        int dr = abs(fr - segmentPoints[segmentNos][index].y);
+                        int dc = abs(fc - segmentPoints[segmentNos][index].x);
+
+                        if (dr <= 1 && dc <= 1) {
+                            // neighbors. Erase last pixel
+                            segmentPoints[segmentNos].pop_back();
+                            noSegmentPixels--;
+                            index--;
+                        }
+                        else break;
+                    } //end-while
+
+                    if (chains[chainNo].len > 1 && noSegmentPixels > 0) {
+                        fr = chains[chainNo].pixels[chains[chainNo].len - 2].y;
+                        fc = chains[chainNo].pixels[chains[chainNo].len - 2].x;
+
+                        int dr = abs(fr - segmentPoints[segmentNos][noSegmentPixels - 1].y);
+                        int dc = abs(fc - segmentPoints[segmentNos][noSegmentPixels - 1].x);
+
+                        if (dr <= 1 && dc <= 1) chains[chainNo].len--;
+                    }
+
+					for (int l = chains[chainNo].len - 1; l >= 0; l--) {
+						segmentPoints[segmentNos].push_back(chains[chainNo].pixels[l]);
+						noSegmentPixels++;
+					}
+
+					chains[chainNo].len = 0;  // помечаем скопированной
+				}
+			}
+
+			totalLen = LongestChain(chains, chains[0].children[0]);
+			if (totalLen > 1) {
+
+				int count = RetrieveChainNos(chains, chains[0].children[0], chainNos);
+
+                // копируем цепочку в прямом порядке. пропускаем первый пиксель в цепи
+				int lastChainNo = chainNos[0];
+				chains[lastChainNo].pixels++;
+				chains[lastChainNo].len--;
+
+				for (int k = 0; k<count; k++) {
+					int chainNo = chainNos[k];
+
+					/* Пробуем удалить лишние пиксели */
+					int fr = chains[chainNo].pixels[0].y;
+					int fc = chains[chainNo].pixels[0].x;
+
+					int index = noSegmentPixels - 2;
+					while (index >= 0) {
+						int dr = abs(fr - segmentPoints[segmentNos][index].y);
+						int dc = abs(fc - segmentPoints[segmentNos][index].x);
+
+						if (dr <= 1 && dc <= 1) {
+							segmentPoints[segmentNos].pop_back();
+							noSegmentPixels--;
+							index--;
+						}
+						else break;
+					}
+
+					int startIndex = 0;
+					int chainLen = chains[chainNo].len;
+					if (chainLen > 1 && noSegmentPixels > 0) {
+						int fr = chains[chainNo].pixels[1].y;
+						int fc = chains[chainNo].pixels[1].x;
+
+						int dr = abs(fr - segmentPoints[segmentNos][noSegmentPixels - 1].y);
+						int dc = abs(fc - segmentPoints[segmentNos][noSegmentPixels - 1].x);
+
+						if (dr <= 1 && dc <= 1) { startIndex = 1; }
+					}
+
+					for (int l = startIndex; l<chains[chainNo].len; l++) {
+						segmentPoints[segmentNos].push_back(chains[chainNo].pixels[l]);
+						noSegmentPixels++;
+					}
+
+					chains[chainNo].len = 0;  // помечаем скопированной
+				}
+			}
+
+
+			  //  Пробуем удалить лишние пиксели
+			int fr = segmentPoints[segmentNos][1].y;
+			int fc = segmentPoints[segmentNos][1].x;
+
+
+			int dr = abs(fr - segmentPoints[segmentNos][noSegmentPixels - 1].y);
+			int dc = abs(fc - segmentPoints[segmentNos][noSegmentPixels - 1].x);
+
+
+			if (dr <= 1 && dc <= 1) {
+				segmentPoints[segmentNos].erase(segmentPoints[segmentNos].begin());
+				noSegmentPixels--;
+			} //end-if
+
+			segmentNos++;
+			segmentPoints.push_back(vector<Point>());
+
+													  // копируем оставшиеся цепочки сюда
+			for (int k = 2; k<noChains; k++) {
+				if (chains[k].len < 2) continue;
+
+				totalLen = LongestChain(chains, k);
+
+				if (totalLen >= 10) {
+
+					int count = RetrieveChainNos(chains, k, chainNos);
+
+					// копируем пиксели
+					noSegmentPixels = 0;
+					for (int k = 0; k<count; k++) {
+						int chainNo = chainNos[k];
+
+						/* Пробуем удалить лишние пиксели */
+						int fr = chains[chainNo].pixels[0].y;
+						int fc = chains[chainNo].pixels[0].x;
+
+						int index = noSegmentPixels - 2;
+						while (index >= 0) {
+							int dr = abs(fr - segmentPoints[segmentNos][index].y);
+							int dc = abs(fc - segmentPoints[segmentNos][index].x);
+
+							if (dr <= 1 && dc <= 1) {
+								// удаляем последний пиксель т к соседи
+								segmentPoints[segmentNos].pop_back();
+								noSegmentPixels--;
+								index--;
+							}
+							else break;
+						}
+
+						int startIndex = 0;
+						int chainLen = chains[chainNo].len;
+						if (chainLen > 1 && noSegmentPixels > 0) {
+							int fr = chains[chainNo].pixels[1].y;
+							int fc = chains[chainNo].pixels[1].x;
+
+							int dr = abs(fr - segmentPoints[segmentNos][noSegmentPixels - 1].y);
+							int dc = abs(fc - segmentPoints[segmentNos][noSegmentPixels - 1].x);
+
+							if (dr <= 1 && dc <= 1) { startIndex = 1; }
+						}
+						for (int l = startIndex; l<chains[chainNo].len; l++) {
+							segmentPoints[segmentNos].push_back(chains[chainNo].pixels[l]);
+							noSegmentPixels++;
+						}
+
+						chains[chainNo].len = 0;  // помечаем скопироавнной
+					}
+					segmentPoints.push_back(vector<Point>());
+					segmentNos++;
+				}
+			}
+
+		}
+
 	}
+
+    // удаляем последний сегмент из массива, т.к. он пуст
+	segmentPoints.pop_back();
+
+	delete[] A;
+	delete[] chains;
+	delete[] stack;
+	delete[] chainNos;
+	delete[] pixels;
 }
+
 
 // 根据像素的梯度值对锚点进行排序
 int* EDLines::sortAnchorsByGradValue1() {

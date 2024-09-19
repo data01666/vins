@@ -206,4 +206,3 @@ private:
     // 更新线段的方程参数
     static void UpdateLineParameters(LineSegment *ls);
 };
-

@@ -31,12 +31,14 @@ void reduceVector(vector<int> &v, vector<uchar> status)
 
 void reduceVector(vector<LineSegment> &v, vector<uchar> &status)
 {
-    int j = 0;
-    for (int i = 0; i < int(v.size()); i++)
-        if (status[i])
-            v[j++] = v[i];
-    v.resize(j);
+    // 使用 std::remove_if 和 lambda 函数移除无效的线段
+    v.erase(std::remove_if(v.begin(), v.end(),
+                [&status, i = 0](const LineSegment&) mutable {
+                    return !status[i++];  // 通过 status[i] 判断是否要移除
+                }),
+            v.end());
 }
+
 
 
 // the following function belongs to FeatureTracker Class
@@ -247,26 +249,49 @@ void FeatureTracker::trackNewlines()
         line_pts = lines.getLines(); // 将检测到的新线段加入到 line_pts 中
 
         // 设置遮罩并筛选线段
+
+        int line_limit = 100; // 限制只取100个线段
+        int line_count = 0;   // 已处理线段的计数器
         for (auto &new_line : line_pts)
-        {
-            // 获取线段的起点和终点
-            cv::Point2f start(static_cast<float>(new_line.sx), static_cast<float>(new_line.sy));
-            cv::Point2f end(static_cast<float>(new_line.ex), static_cast<float>(new_line.ey));
-
-            // 判断起点和终点是否在遮罩区域内
-            if (mask.at<uchar>(start) == 255 && mask.at<uchar>(end) == 255)
             {
-                // 如果该线段的起点和终点均未被遮罩占用，将其加入当前帧的线段集合
-                forw_line_segments.push_back(new_line);
+            if (line_count >= line_limit)
+                break;
+                // 获取线段的起点和终点
+                cv::Point2f start(static_cast<float>(new_line.sx), static_cast<float>(new_line.sy));
+                cv::Point2f end(static_cast<float>(new_line.ex), static_cast<float>(new_line.ey));
 
-                // 在遮罩中对该线段的起点和终点画圈，占用此区域，防止新线段重叠
-                cv::circle(mask, start, MIN_DIST, 0, -1);
-                cv::circle(mask, end, MIN_DIST, 0, -1);
 
-                // 记录线段的 ID
-                line_ids.push_back(-1);
+                // 检查起点和终点是否在图像范围内
+                if (start.x >= 0 && start.x < mask.cols && start.y >= 0 && start.y < mask.rows &&
+                    end.x >= 0 && end.x < mask.cols && end.y >= 0 && end.y < mask.rows)
+                {
+                    // 判断起点和终点是否在遮罩区域内
+
+                    if (mask.at<uchar>(start) == 255 && mask.at<uchar>(end) == 255)
+                    {
+                        // 如果该线段的起点和终点均未被遮罩占用，将其加入当前帧的线段集合
+
+                        forw_line_segments.push_back(new_line);
+
+
+                        // 在遮罩中对该线段的起点和终点画圈，占用此区域，防止新线段重叠
+                        cv::circle(mask, start, MIN_DIST, 0, -1);
+                        cv::circle(mask, end, MIN_DIST, 0, -1);
+
+                        // 记录线段的 ID
+                        line_ids.push_back(-1);
+
+
+                    }
+                }
+                else
+                {
+                    // 如果起点或终点不在图像范围内，可以选择记录日志或跳过处理
+                    std::cout << "Line start or end point out of bounds" << std::endl;
+                }
+
             }
-        }
+
 
         ROS_DEBUG("detect new line features costs: %fms", t_l.toc());
     }
