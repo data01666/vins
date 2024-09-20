@@ -88,10 +88,12 @@ void FeatureTracker::flowTrack()
 
 void FeatureTracker::lineflowTrack()
 {
-    if (cur_line_segments.size() > 0)
+    if (PUB_THIS_FRAME)
+    {
+        if (cur_line_segments.size() > 0)
     {
         TicToc t_o;
-        std::vector<uchar> status; // 用于记录每条线段的状态
+        std::vector<uchar> lstatus(cur_line_segments.size(), 1); // 初始化线段的状态，默认值为1（有效）
 
         for (int i = 0; i < cur_line_segments.size(); i++)
         {
@@ -105,6 +107,7 @@ void FeatureTracker::lineflowTrack()
 
             std::vector<cv::Point2f> forw_keypoints;
             std::vector<float> err;
+            std::vector<uchar> status; // 用于记录线段每个关键点的状态
 
             // 对当前帧的线段关键点进行光流跟踪
             cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_keypoints, forw_keypoints, status, err, cv::Size(21, 21), 3);
@@ -119,7 +122,7 @@ void FeatureTracker::lineflowTrack()
 
             double success_ratio = (double)tracked_count / cur_keypoints.size();
 
-            if (success_ratio > 0.7)  // 设定阈值，至少70%的关键点被成功跟踪
+            if (success_ratio > 0.7)  // 成功率高，至少70%的关键点被成功跟踪
             {
                 std::vector<std::pair<double, double>> tracked_keypoints;
                 for (int j = 0; j < status.size(); j++)
@@ -129,34 +132,46 @@ void FeatureTracker::lineflowTrack()
                         tracked_keypoints.push_back({ forw_keypoints[j].x, forw_keypoints[j].y });
                     }
                 }
-                forw_line_segments[i].keyPoints = tracked_keypoints;
 
-                // 计算DTW误差来进一步验证线段匹配
-                double dtw_distance = computeDTW(cur_line_segments[i].keyPoints, forw_line_segments[i].keyPoints);
-                double DTW_THRESHOLD = 1.5;
-                if (dtw_distance > DTW_THRESHOLD)
-                {
-                    // 如果DTW距离较大，标记为无效
-                    status[i] = 0;
-                }
+                // 将新的线段关键点添加到 forward 线段容器
+                LineSegment new_segment = cur_line_segments[i];
+                new_segment.keyPoints = tracked_keypoints;
+                forw_line_segments.push_back(new_segment);
             }
             else
             {
-                // 如果成功率太低，标记为无效
-                status[i] = 0;
+                // 如果成功率太低，使用DTW进行验证
+                LineSegment new_segment = cur_line_segments[i];
+
+                // 对当前帧的线段关键点与前一帧进行DTW匹配
+                double dtw_distance = computeDTW(cur_line_segments[i].keyPoints, new_segment.keyPoints);
+                double DTW_THRESHOLD = 30;
+
+                if (dtw_distance > DTW_THRESHOLD)
+                {
+                    // 如果DTW距离较大，标记为无效
+                    lstatus[i] = 0;
+                }
+                else
+                {
+                    // 如果DTW验证通过，则将该线段添加到forward线段集合
+                    forw_line_segments.push_back(new_segment);
+                }
             }
+            
         }
 
         // 根据跟踪状态更新线段
-        reduceVector(prev_line_segments, status);
-        reduceVector(cur_line_segments, status);
-        reduceVector(forw_line_segments, status);
-        reduceVector(line_ids, status);
+        reduceVector(prev_line_segments, lstatus);
+        reduceVector(cur_line_segments, lstatus);
+        reduceVector(forw_line_segments, lstatus);
+        reduceVector(line_ids, lstatus);
 
         ROS_DEBUG("line optical flow tracking costs: %fms", t_o.toc());
     }
-}
+    }
 
+}
 
 
 double FeatureTracker::computeDTW(const std::vector<std::pair<double, double>>& cur_keypoints,
@@ -232,6 +247,7 @@ void FeatureTracker::trackNew()
 // 设置线特征的遮罩，并且添加新的线段
 void FeatureTracker::trackNewlines()
 {
+
     // 当需要在当前帧中发布数据时才执行基础的特征线筛选与跟踪操作
     if (PUB_THIS_FRAME)
     {
@@ -250,12 +266,8 @@ void FeatureTracker::trackNewlines()
 
         // 设置遮罩并筛选线段
 
-        int line_limit = 100; // 限制只取100个线段
-        int line_count = 0;   // 已处理线段的计数器
         for (auto &new_line : line_pts)
             {
-            if (line_count >= line_limit)
-                break;
                 // 获取线段的起点和终点
                 cv::Point2f start(static_cast<float>(new_line.sx), static_cast<float>(new_line.sy));
                 cv::Point2f end(static_cast<float>(new_line.ex), static_cast<float>(new_line.ey));
@@ -270,7 +282,6 @@ void FeatureTracker::trackNewlines()
                     if (mask.at<uchar>(start) == 255 && mask.at<uchar>(end) == 255)
                     {
                         // 如果该线段的起点和终点均未被遮罩占用，将其加入当前帧的线段集合
-
                         forw_line_segments.push_back(new_line);
 
 
@@ -281,7 +292,6 @@ void FeatureTracker::trackNewlines()
                         // 记录线段的 ID
                         line_ids.push_back(-1);
 
-
                     }
                 }
                 else
@@ -291,8 +301,6 @@ void FeatureTracker::trackNewlines()
                 }
 
             }
-
-
         ROS_DEBUG("detect new line features costs: %fms", t_l.toc());
     }
 }
