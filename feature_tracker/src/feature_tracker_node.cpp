@@ -130,8 +130,15 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
     {
         bool completed = false;
         for (int j = 0; j < NUM_OF_CAM; j++)
+        {
             if (j != 1 || !STEREO_TRACK)
-                completed |= trackerData[j].updateID(i);
+            {
+                // 更新点特征的 ID
+                completed |= trackerData[j].updateID(i, false);  // false 表示处理点特征
+                // 更新线段特征的 ID
+                completed |= trackerData[j].updateID(i, true);  // true 表示处理线段特征
+            }
+        }
         if (!completed)
             break;
     }

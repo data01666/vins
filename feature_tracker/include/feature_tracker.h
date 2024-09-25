@@ -94,7 +94,7 @@ class FeatureTracker
     /**
      * @brief 更新特征的ID
      */
-    bool updateID(unsigned int i);
+    bool updateID(unsigned int i, bool line);
 
     /**
      * @brief 读取相机参数
@@ -119,6 +119,7 @@ class FeatureTracker
      * @param 输入  const string &name
      */
     void undistortedPoints();
+    void undistortedLines();
 
     cv::Mat mask; // 图像掩码
     cv::Mat fisheye_mask; // 鱼眼相机mask，用来去除边缘噪点
@@ -146,9 +147,11 @@ class FeatureTracker
 
     std::vector<LineSegment> prev_line_segments,cur_line_segments,forw_line_segments; // 对应的线特征
     std::vector<LineSegment> line_pts; // 每一帧新提取的线特征
-    // 线段的ID和跟踪次数
+    // 线段的ID
     vector<int> line_ids;       // 线段的ID
     static int line_n_id;      // 线段的n_id
+    map<int, LineSegment> cur_line_map;
+    map<int, LineSegment> prev_line_map;
     // 线段的速度（可以根据关键点位置计算）
     vector<cv::Point2f> line_velocity; // 每一条线段的移动速度
 };

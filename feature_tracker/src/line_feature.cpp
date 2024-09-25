@@ -1028,7 +1028,7 @@ void EDLines::SplitSegment2Lines(double *x, double *y, int noPixels, int segment
                 keyPoints.insert(keyPoints.begin(), {sx, sy});
                 keyPoints.push_back({ex, ey});
 
-                // 自适应调整关键点数量
+                /*// 自适应调整关键点数量
                 size_t totalPoints = keyPoints.size();
                 size_t maxPoints = std::max(5, int(len / 10)); // 根据线段长度自适应关键点数量, 最少5个点
 
@@ -1039,7 +1039,7 @@ void EDLines::SplitSegment2Lines(double *x, double *y, int noPixels, int segment
                         sampledKeyPoints.push_back(keyPoints[int(i * step)]);
                     }
                     keyPoints = sampledKeyPoints; // 替换为均匀采样后的关键点
-                }
+                }*/
             	// 按照 x 坐标从小到大排序
             	std::sort(keyPoints.begin(), keyPoints.end(), [](const std::pair<double, double>& a, const std::pair<double, double>& b) {
             		return a.first < b.first; });

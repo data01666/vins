@@ -39,8 +39,6 @@ void reduceVector(vector<LineSegment> &v, vector<uchar> &status)
             v.end());
 }
 
-
-
 // the following function belongs to FeatureTracker Class
 FeatureTracker::FeatureTracker() {}
 
@@ -121,7 +119,7 @@ void FeatureTracker::lineflowTrack()
             }
 
             double success_ratio = (double)tracked_count / cur_keypoints.size();
-
+            /*
             if (success_ratio > 0.7)  // 成功率高，至少70%的关键点被成功跟踪
             {
                 std::vector<std::pair<double, double>> tracked_keypoints;
@@ -157,8 +155,42 @@ void FeatureTracker::lineflowTrack()
                     // 如果DTW验证通过，则将该线段添加到forward线段集合
                     forw_line_segments.push_back(new_segment);
                 }
+            }*/
+
+            if (success_ratio < 0.3)  // 成功率低，至多30%的关键点被成功跟踪
+            {
+                lstatus[i] = 0;
             }
-            
+            else
+            {
+                std::vector<std::pair<double, double>> tracked_keypoints;
+                for (int j = 0; j < status.size(); j++)
+                {
+                    if (status[j])
+                    {
+                        tracked_keypoints.push_back({ forw_keypoints[j].x, forw_keypoints[j].y });
+                    }
+                }
+
+                // 将新的线段关键点添加到 forward 线段容器
+                LineSegment new_segment = cur_line_segments[i];
+                new_segment.keyPoints = tracked_keypoints;
+
+                // 对当前帧的线段关键点与前一帧进行DTW匹配
+                double dtw_distance = computeDTW(cur_line_segments[i].keyPoints, new_segment.keyPoints);
+                double DTW_THRESHOLD = 30;
+
+                if (dtw_distance > DTW_THRESHOLD)
+                {
+                    // 如果DTW距离较大，标记为无效
+                    lstatus[i] = 0;
+                }
+                else
+                {
+                    // 如果DTW验证通过，则将该线段添加到forward线段集合
+                    forw_line_segments.push_back(new_segment);
+                }
+            }
         }
 
         // 根据跟踪状态更新线段
@@ -172,7 +204,6 @@ void FeatureTracker::lineflowTrack()
     }
 
 }
-
 
 double FeatureTracker::computeDTW(const std::vector<std::pair<double, double>>& cur_keypoints,
                                   const std::vector<std::pair<double, double>>& forw_keypoints)
@@ -247,7 +278,6 @@ void FeatureTracker::trackNew()
 // 设置线特征的遮罩，并且添加新的线段
 void FeatureTracker::trackNewlines()
 {
-
     // 当需要在当前帧中发布数据时才执行基础的特征线筛选与跟踪操作
     if (PUB_THIS_FRAME)
     {
@@ -265,33 +295,25 @@ void FeatureTracker::trackNewlines()
         line_pts = lines.getLines(); // 将检测到的新线段加入到 line_pts 中
 
         // 设置遮罩并筛选线段
-
         for (auto &new_line : line_pts)
             {
                 // 获取线段的起点和终点
                 cv::Point2f start(static_cast<float>(new_line.sx), static_cast<float>(new_line.sy));
                 cv::Point2f end(static_cast<float>(new_line.ex), static_cast<float>(new_line.ey));
 
-
                 // 检查起点和终点是否在图像范围内
                 if (start.x >= 0 && start.x < mask.cols && start.y >= 0 && start.y < mask.rows &&
                     end.x >= 0 && end.x < mask.cols && end.y >= 0 && end.y < mask.rows)
                 {
                     // 判断起点和终点是否在遮罩区域内
-
                     if (mask.at<uchar>(start) == 255 && mask.at<uchar>(end) == 255)
                     {
                         // 如果该线段的起点和终点均未被遮罩占用，将其加入当前帧的线段集合
                         forw_line_segments.push_back(new_line);
-
-
                         // 在遮罩中对该线段的起点和终点画圈，占用此区域，防止新线段重叠
-                        cv::circle(mask, start, MIN_DIST, 0, -1);
-                        cv::circle(mask, end, MIN_DIST, 0, -1);
-
+                        cv::line(mask, start, end, cv::Scalar(0), MIN_DIST);
                         // 记录线段的 ID
                         line_ids.push_back(-1);
-
                     }
                 }
                 else
@@ -411,8 +433,9 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
     cur_pts = forw_pts;
     cur_line_segments = forw_line_segments;
 
-    // 特征点去畸变
+    // 特征点线去畸变
     undistortedPoints();
+    undistortedLines();
     prev_time = cur_time;
 }
 
@@ -458,16 +481,33 @@ void FeatureTracker::rejectWithF()
     }
 }
 
-bool FeatureTracker::updateID(unsigned int i)
+bool FeatureTracker::updateID(unsigned int i, bool isLineSegment)
 {
-    if (i < ids.size())
+    if (isLineSegment)
     {
-        if (ids[i] == -1)
-            ids[i] = n_id++;
-        return true;
+        // 如果是处理线段的情况
+        if (i < line_ids.size())
+        {
+            if (line_ids[i] == -1)  // 线段 ID 为 -1 时进行全局 ID 分配
+            {
+                line_ids[i] = line_n_id++;  // 使用全局线段 ID 自增
+                return true;  // 更新成功，返回 true
+            }
+        }
     }
     else
-        return false;
+    {
+        // 处理点特征的情况
+        if (i < ids.size())
+        {
+            if (ids[i] == -1)  // 点特征 ID 为 -1 时进行分配
+            {
+                ids[i] = n_id++;
+                return true;  // 更新成功，返回 true
+            }
+        }
+    }
+    return false;  // 如果索引超出范围或 ID 已经分配，返回 false
 }
 
 void FeatureTracker::readIntrinsicParameter(const string &calib_file)
@@ -575,3 +615,67 @@ void FeatureTracker::undistortedPoints()
     }
     prev_un_pts_map = cur_un_pts_map;
 }
+
+void FeatureTracker::undistortedLines() {
+    // 清空之前的无畸变线段和映射表
+    std::vector<LineSegment> cur_un_lines; // 存储当前帧的无畸变线段集合
+    std::map<int, LineSegment> cur_un_lines_map; // 存储每个线段 ID 与对应无畸变线段的映射关系
+
+    // 处理当前帧线段
+    for (unsigned int i = 0; i < cur_line_segments.size(); i++) {
+        // 创建一个无畸变线段，直接用现有的线段数据初始化
+        LineSegment undistorted_line = cur_line_segments[i]; // 直接复制
+
+        // 处理线段的起点和终点
+        Eigen::Vector2d start_a(cur_line_segments[i].sx, cur_line_segments[i].sy);
+        Eigen::Vector3d start_b;
+        m_camera->liftProjective(start_a, start_b);
+        undistorted_line.sx = start_b.x() / start_b.z();
+        undistorted_line.sy = start_b.y() / start_b.z();
+
+        Eigen::Vector2d end_a(cur_line_segments[i].ex, cur_line_segments[i].ey);
+        Eigen::Vector3d end_b;
+        m_camera->liftProjective(end_a, end_b);
+        undistorted_line.ex = end_b.x() / end_b.z();
+        undistorted_line.ey = end_b.y() / end_b.z();
+
+        // 插入到映射中
+        cur_un_lines_map.insert({line_ids[i], undistorted_line});
+        cur_un_lines.push_back(undistorted_line); // 添加到当前无畸变线段集合
+    }
+
+    // 计算线段速度
+    if (!prev_line_map.empty()) {
+        double dt = cur_time - prev_time; // 计算时间差
+        line_velocity.clear(); // 清空上一帧线段速度集合
+        for (unsigned int i = 0; i < cur_line_segments.size(); i++) {
+            if (line_ids[i] != -1)
+            {
+                auto it = prev_line_map.find(line_ids[i]);
+                if (it != prev_line_map.end()) {
+                    // 计算起点和终点的速度
+                    double v_x_start = (cur_un_lines[i].sx - it->second.sx) / dt;
+                    double v_y_start = (cur_un_lines[i].sy - it->second.sy) / dt;
+
+                    double v_x_end = (cur_un_lines[i].ex - it->second.ex) / dt;
+                    double v_y_end = (cur_un_lines[i].ey - it->second.ey) / dt;
+
+                    // 计算线段的平均速度
+                    cv::Point2f avg_velocity((v_x_start + v_x_end) / 2, (v_y_start + v_y_end) / 2);
+                    line_velocity.push_back(avg_velocity);
+                } else {
+                    // 如果上一帧没有对应线段，速度设为0
+                    line_velocity.push_back(cv::Point2f(0, 0));
+                }
+            }
+        }
+    } else {
+        // 如果没有上一帧线段，所有速度设为0
+        line_velocity.resize(cur_line_segments.size(), cv::Point2f(0, 0));
+    }
+    // 更新上一帧的映射表
+    prev_line_map = cur_un_lines_map;
+}
+
+
+
