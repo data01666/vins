@@ -295,34 +295,47 @@ void FeatureTracker::trackNewlines()
         line_pts = lines.getLines(); // 将检测到的新线段加入到 line_pts 中
 
         // 设置遮罩并筛选线段
-        for (auto &new_line : line_pts)
+        for (const auto &prev_line : prev_line_map)
+        {
+            const LineSegment &line = prev_line.second; // 获取线段
+            cv::Point2f start(static_cast<float>(line.sx), static_cast<float>(line.sy));
+            cv::Point2f end(static_cast<float>(line.ex), static_cast<float>(line.ey));
+
+            // 检查起点和终点是否在图像范围内
+            if (start.x >= 0 && start.x < mask.cols && start.y >= 0 && start.y < mask.rows &&
+                end.x >= 0 && end.x < mask.cols && end.y >= 0 && end.y < mask.rows)
             {
-                // 获取线段的起点和终点
-                cv::Point2f start(static_cast<float>(new_line.sx), static_cast<float>(new_line.sy));
-                cv::Point2f end(static_cast<float>(new_line.ex), static_cast<float>(new_line.ey));
-
-                // 检查起点和终点是否在图像范围内
-                if (start.x >= 0 && start.x < mask.cols && start.y >= 0 && start.y < mask.rows &&
-                    end.x >= 0 && end.x < mask.cols && end.y >= 0 && end.y < mask.rows)
-                {
-                    // 判断起点和终点是否在遮罩区域内
-                    if (mask.at<uchar>(start) == 255 && mask.at<uchar>(end) == 255)
-                    {
-                        // 如果该线段的起点和终点均未被遮罩占用，将其加入当前帧的线段集合
-                        forw_line_segments.push_back(new_line);
-                        // 在遮罩中对该线段的起点和终点画圈，占用此区域，防止新线段重叠
-                        cv::line(mask, start, end, cv::Scalar(0), MIN_DIST);
-                        // 记录线段的 ID
-                        line_ids.push_back(-1);
-                    }
-                }
-                else
-                {
-                    // 如果起点或终点不在图像范围内，可以选择记录日志或跳过处理
-                    std::cout << "Line start or end point out of bounds" << std::endl;
-                }
-
+                // 在遮罩中对该线段的起点和终点占用此区域
+                cv::line(mask, start, end, cv::Scalar(0), MIN_DIST);
             }
+        }
+
+        for (auto &new_line : line_pts)
+        {
+            cv::Point2f start(static_cast<float>(new_line.sx), static_cast<float>(new_line.sy));
+            cv::Point2f end(static_cast<float>(new_line.ex), static_cast<float>(new_line.ey));
+
+            // 检查起点和终点是否在图像范围内
+            if (start.x >= 0 && start.x < mask.cols && start.y >= 0 && start.y < mask.rows &&
+                end.x >= 0 && end.x < mask.cols && end.y >= 0 && end.y < mask.rows)
+            {
+                // 判断起点和终点是否在遮罩区域内
+                if (mask.at<uchar>(start) == 255 && mask.at<uchar>(end) == 255)
+                {
+                    // 如果该线段的起点和终点均未被遮罩占用，将其加入当前帧的线段集合
+                    forw_line_segments.push_back(new_line);
+                    // 在遮罩中对该线段的起点和终点占用此区域
+                    cv::line(mask, start, end, cv::Scalar(0), MIN_DIST);
+                    // 记录线段的 ID
+                    line_ids.push_back(-1);
+                }
+            }
+            else
+            {
+                // 如果起点或终点不在图像范围内，可以选择记录日志或跳过处理
+                std::cout << "Line start or end point out of bounds" << std::endl;
+            }
+        }
         ROS_DEBUG("detect new line features costs: %fms", t_l.toc());
     }
 }
@@ -494,6 +507,8 @@ bool FeatureTracker::updateID(unsigned int i, bool isLineSegment)
                 return true;  // 更新成功，返回 true
             }
         }
+        else
+            return false;
     }
     else
     {
@@ -501,13 +516,15 @@ bool FeatureTracker::updateID(unsigned int i, bool isLineSegment)
         if (i < ids.size())
         {
             if (ids[i] == -1)  // 点特征 ID 为 -1 时进行分配
-            {
                 ids[i] = n_id++;
-                return true;  // 更新成功，返回 true
-            }
+            // 更新成功，返回 true
+            return true;
         }
+        else
+            return false;
     }
-    return false;  // 如果索引超出范围或 ID 已经分配，返回 false
+    //return false;  // 如果索引超出范围或 ID 已经分配，返回 false
+
 }
 
 void FeatureTracker::readIntrinsicParameter(const string &calib_file)
