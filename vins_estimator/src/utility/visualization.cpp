@@ -22,22 +22,37 @@ static Vector3d last_path(0.0, 0.0, 0.0);
 
 void registerPub(ros::NodeHandle &n)
 {
+    // 发布最新里程计信息
     pub_latest_odometry = n.advertise<nav_msgs::Odometry>("imu_propagate", 1000);
+    // 发布路径信息
     pub_path = n.advertise<nav_msgs::Path>("path", 1000);
+    // 发布重定位路径信息
     pub_relo_path = n.advertise<nav_msgs::Path>("relocalization_path", 1000);
+    // 发布里程计信息
     pub_odometry = n.advertise<nav_msgs::Odometry>("odometry", 1000);
+    // 发布点云信息
     pub_point_cloud = n.advertise<sensor_msgs::PointCloud>("point_cloud", 1000);
+    // 发布历史点云信息
     pub_margin_cloud = n.advertise<sensor_msgs::PointCloud>("history_cloud", 1000);
+    // 发布关键位姿信息
     pub_key_poses = n.advertise<visualization_msgs::Marker>("key_poses", 1000);
+    // 发布相机位姿信息
     pub_camera_pose = n.advertise<nav_msgs::Odometry>("camera_pose", 1000);
+    // 发布相机位姿可视化信息
     pub_camera_pose_visual = n.advertise<visualization_msgs::MarkerArray>("camera_pose_visual", 1000);
+    // 发布关键帧位姿信息
     pub_keyframe_pose = n.advertise<nav_msgs::Odometry>("keyframe_pose", 1000);
+    // 发布关键帧点云信息
     pub_keyframe_point = n.advertise<sensor_msgs::PointCloud>("keyframe_point", 1000);
+    // 发布外参信息
     pub_extrinsic = n.advertise<nav_msgs::Odometry>("extrinsic", 1000);
-    pub_relo_relative_pose=  n.advertise<nav_msgs::Odometry>("relo_relative_pose", 1000);
+    // 发布重定位相对位姿信息
+    pub_relo_relative_pose = n.advertise<nav_msgs::Odometry>("relo_relative_pose", 1000);
 
+    // 设置相机位姿可视化的比例和线宽
     cameraposevisual.setScale(1);
     cameraposevisual.setLineWidth(0.05);
+    // 设置关键帧基础可视化的比例和线宽
     keyframebasevisual.setScale(0.1);
     keyframebasevisual.setLineWidth(0.01);
 }
