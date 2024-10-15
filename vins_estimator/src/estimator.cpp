@@ -31,7 +31,6 @@ void Estimator::setParameter()
     td = TD;
 }
 
-
 void Estimator::clearState()
 {
     // 遍历窗口内的所有状态
@@ -172,47 +171,111 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     gyr_0 = angular_velocity;
 }
 
-
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header)
 {
-    // 1. decide marg_old or marg new and add features to f_manager
-    ROS_DEBUG("new image coming ------------------------------------------");
-    ROS_DEBUG("Adding feature points %lu", image.size());
+    // 1. 根据视差检查是否需要边缘化旧帧或次新帧，并将特征添加到特征管理器
+    ROS_DEBUG("新图像帧到达 ------------------------------------------");
+    ROS_DEBUG("添加特征点数量 %lu", image.size());
+    //true：上一帧是关键帧，marg_old; false:上一帧不是关键帧marg_second_new
+    //TODO frame_count指的是次新帧还是最新帧？
     if (f_manager.addFeatureCheckParallax(frame_count, image, td))
-        marginalization_flag = MARGIN_OLD;
+        marginalization_flag = MARGIN_OLD;  // 边缘化旧帧，0
     else
-        marginalization_flag = MARGIN_SECOND_NEW;
+        marginalization_flag = MARGIN_SECOND_NEW;  // 边缘化次新帧，1
 
-    // 2. build all_image_frame for initialization
-    ROS_DEBUG("this frame is--------------------%s", marginalization_flag ? "reject" : "accept");
-    ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");
-    ROS_DEBUG("Solving %d", frame_count);
-    ROS_DEBUG("number of feature: %d", f_manager.getFeatureCount());
+    // 2. 为初始化阶段构建所有图像帧的数据结构
+    ROS_DEBUG("当前帧状态--------------------%s", marginalization_flag ? "非关键帧" : "关键帧");
+    ROS_DEBUG("当前帧 %s", marginalization_flag ? "非关键帧" : "关键帧");
+    ROS_DEBUG("正在求解第 %d 帧", frame_count);
+    ROS_DEBUG("特征点数量: %d", f_manager.getFeatureCount());
     Headers[frame_count] = header;
 
-    if (solver_flag != NON_LINEAR) 
+    if (solver_flag != NON_LINEAR)
     {
+        // 初始化时，创建图像帧结构并保存 IMU 预积分数据
+        // 数据结构: imageframe是ImageFrame的一个实例，定义在initial / initial_alignment.h里,它是用于融合IMU和视觉信息的数据结构
+        // 包括了某一帧的全部信息位姿，特征点信息，预积分信息，是否是关键帧等。
         ImageFrame imageframe(image, header.stamp.toSec());
         imageframe.pre_integration = tmp_pre_integration;
         all_image_frame.insert(make_pair(header.stamp.toSec(), imageframe));
+        // 更新临时预积分初始值
         tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
     }
 
-    // 3. calibrate the rotation and translation from camera to IMU
+    // 3. 校准从相机到 IMU 的旋转与平移
     calibrationExRotation();
 
-    //4. initialize
+    // 4. 系统初始化
     if (solver_flag == INITIAL)
-	    initial(header);
+        initial(header);
 
-    //5. optimization
+    // 5. 进入非线性优化阶段
     else
-        backend.backend(this);
+        backend.backend(this);  // 调用后端优化模块
+}
+
+void Estimator::processlines(const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &lines, const std_msgs::Header &header)
+{
+    ROS_DEBUG("新线特征帧到达 ------------------------------------------");
+
+    // 遍历所有线特征
+    for (const auto &line : lines)
+    {
+        int line_id = line.first;  // 获取线特征 ID
+        const auto &observations = line.second;  // 获取该特征的观测信息
+
+        // 查找当前线特征 ID 是否已经存在于特征管理器中
+        auto it = find_if(f_manager.line_feature.begin(), f_manager.line_feature.end(), [line_id](const LineFeaturePerId &lf)
+        {
+            return lf.line_id == line_id;
+        });
+
+        if (it == f_manager.line_feature.end())
+        {
+            // 如果是新线特征，则将其添加到特征管理器中
+            LineFeaturePerId new_line(line_id, frame_count);
+            for (const auto &obs : observations)
+            {
+                int camera_id = obs.first;  // 相机 ID
+                const Eigen::Matrix<double, 12, 1> &line_data = obs.second;  // 线特征数据
+
+                // 使用构造函数创建线特征的帧结构并添加到新特征中
+                LineFeaturePerFrame line_frame(line_data,td);  // 传入 12 维向量，包含起点和终点数据
+                new_line.addFrame(frame_count, camera_id, line_frame);  // 将帧数据添加到新特征
+            }
+            f_manager.line_feature.push_back(new_line);  // 将新特征添加到特征管理器
+        }
+        else
+        {
+            // 如果线特征已存在，则更新当前帧的数据
+            for (const auto &obs : observations)
+            {
+                int camera_id = obs.first;  // 相机 ID
+                const Eigen::Matrix<double, 12, 1> &line_data = obs.second;  // 线特征数据
+
+                // 使用构造函数创建线特征的帧结构并添加到现有特征中
+                LineFeaturePerFrame line_frame(line_data,td);
+                it->addFrame(frame_count, camera_id, line_frame);  // 将帧数据添加到现有特征
+            }
+        }
+    }
+
+    // 判断初始化或优化阶段
+    if (solver_flag == INITIAL)
+    {
+        initialLine(header);  // 初始化阶段可能需要处理线特征
+    }
+    else
+    {
+        backend.backend(this);  // 非线性优化阶段
+    }
+
+    ROS_DEBUG("线特征处理完成，当前帧索引: %d", frame_count);
 }
 
 void Estimator::calibrationExRotation()
 {
-    if(ESTIMATE_EXTRINSIC == 2)
+    if(ESTIMATE_EXTRINSIC == 2) //如果没有外参则进行标定
     {
         ROS_INFO("calibrating extrinsic param, rotation movement is needed");
         if (frame_count != 0)

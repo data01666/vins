@@ -25,36 +25,45 @@
 #include "../include/utility/visualization.h"
 
 // @param main vio operator
-Estimator estimator;
+Estimator estimator; // 主 VIO（视觉惯性里程计）操作器对象，用于进行状态估计
 
 // @param buffer
-std::condition_variable con;
-double current_time = -1;
-queue<sensor_msgs::ImuConstPtr> imu_buf;
-queue<sensor_msgs::PointCloudConstPtr> feature_buf;
-queue<sensor_msgs::PointCloudConstPtr> relo_buf;
-int sum_of_wait = 0;
+std::condition_variable con; // 条件变量，用于同步线程之间的等待和通知
+double current_time = -1; // 当前时间戳，初始化为 -1
+queue<sensor_msgs::ImuConstPtr> imu_buf; // IMU 数据缓冲区队列
+queue<sensor_msgs::PointCloudConstPtr> feature_buf; // 特征点数据缓冲区队列
+queue<sensor_msgs::PointCloudConstPtr> relo_buf; // 重定位数据缓冲区队列
+queue<sensor_msgs::PointCloudConstPtr> line_feature_start_buf; // 线特征数据缓冲区队列
+queue<sensor_msgs::PointCloudConstPtr> line_feature_end_buf;
+int sum_of_wait = 0; // 等待特征点或IMU数据计数，用于记录等待数据的总次数
 
 // @param mutex for buf, status value and vio processing
-std::mutex m_buf;
-std::mutex m_state; 
+std::mutex m_buf; // 缓冲区的互斥锁，用于同步访问 IMU 和特征点缓冲区
+std::mutex m_state; // 状态值互斥锁，用于同步状态变量的访问
 //std::mutex i_buf;   // TODO seems like useless
-std::mutex m_estimator;
+std::mutex m_estimator; // VIO 估计器互斥锁，用于同步估计器的访问
 
 // @param temp status values
-double latest_time;
-Eigen::Vector3d tmp_P;
-Eigen::Quaterniond tmp_Q;
-Eigen::Vector3d tmp_V;
-Eigen::Vector3d tmp_Ba;
-Eigen::Vector3d tmp_Bg;
-Eigen::Vector3d acc_0;
-Eigen::Vector3d gyr_0;
+double latest_time; // 最新时间戳，用于跟踪最新的时间信息
+Eigen::Vector3d tmp_P; // 临时位置状态变量
+Eigen::Quaterniond tmp_Q; // 临时姿态四元数状态变量
+Eigen::Vector3d tmp_V; // 临时速度状态变量
+Eigen::Vector3d tmp_Ba; // 临时加速度偏置状态变量
+Eigen::Vector3d tmp_Bg; // 临时陀螺仪偏置状态变量
+Eigen::Vector3d acc_0; // 初始加速度测量值
+Eigen::Vector3d gyr_0; // 初始陀螺仪测量值
 
 // @param flags
-bool init_feature = 0;
-bool init_imu = 1;
-double last_imu_t = 0;
+bool init_feature = 0; // 是否初始化了特征数据的标志，0 表示未初始化
+bool init_imu = 1; // 是否初始化了 IMU 数据的标志，1 表示已初始化
+double last_imu_t = 0; // 上一个 IMU 数据的时间戳，用于计算时间差
+bool init_line_feature = 0; // 是否初始化了线特征数据的标志，0 表示未初始化
+
+struct featuredata {
+    sensor_msgs::PointCloudConstPtr point_features;          // 点特征
+    sensor_msgs::PointCloudConstPtr line_features_start;     // 线特征起点
+    sensor_msgs::PointCloudConstPtr line_features_end;       // 线特征终点
+};
 
 // @brief predict status values: Ps/Vs/Rs
 void predict(const sensor_msgs::ImuConstPtr &imu_msg)
@@ -133,64 +142,73 @@ void update()
 
 }
 
-// 获取并对齐特征帧和IMU测量数据
 // IMU数据时间戳位于图像帧之前
-std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>>
-getMeasurements()
+// 获取并对齐特征帧和IMU测量数据，并加入线特征数据
+std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, featuredata>> getMeasurements()
 {
-    std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>> measurements;
+    std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, featuredata>> measurements;
 
     while (true)
     {
-        // 边界判断：如果 IMU 缓冲区或特征缓冲区为空，说明配对完成
-        if (imu_buf.empty() || feature_buf.empty())
+        if (imu_buf.empty() || feature_buf.empty() || line_feature_start_buf.empty() || line_feature_end_buf.empty())
             return measurements;
 
-        // 检查 IMU 缓冲区最后一条数据的时间戳是否晚于特征缓冲区第一条数据的时间戳
-        // 如果不晚，说明当前 IMU 数据不足，需要等待更多 IMU 数据
+        // 检查IMU数据和图像特征时间戳是否对齐
         if (!(imu_buf.back()->header.stamp.toSec() > feature_buf.front()->header.stamp.toSec() + estimator.td))
         {
-            // 统计等待次数
             sum_of_wait++;
-            // 返回当前的测量结果
             return measurements;
         }
 
-        // 检查 IMU 缓冲区第一条数据的时间戳是否早于特征缓冲区第一条数据的时间戳
-        // 如果不早，说明特征帧过多，需要丢弃特征帧
         if (!(imu_buf.front()->header.stamp.toSec() < feature_buf.front()->header.stamp.toSec() + estimator.td))
         {
-            // 发出警告信息，提示丢弃特征帧
-            ROS_WARN("throw img, only should happen at the beginning");
-            // 丢弃过多的特征帧
+            ROS_WARN("丢弃图像帧，通常只会发生在开始阶段");
             feature_buf.pop();
-            // 继续下一个循环
+            line_feature_start_buf.pop(); // 同时丢弃对应的线特征起点
+            line_feature_end_buf.pop();   // 同时丢弃对应的线特征终点
             continue;
         }
 
-        // 核心操作：获取视觉帧信息
+        // 获取图像特征帧
         sensor_msgs::PointCloudConstPtr img_msg = feature_buf.front();
-        feature_buf.pop(); // 从特征缓冲区中移除该帧
+        feature_buf.pop();
 
-        // 核心操作：提取与当前视觉帧时间戳对齐的 IMU 信息
+        // 获取对齐的线特征
+        sensor_msgs::PointCloudConstPtr line_start_msg = line_feature_start_buf.front();
+        sensor_msgs::PointCloudConstPtr line_end_msg = line_feature_end_buf.front();
+
+        // 检查线特征时间戳是否与图像帧时间戳对齐
+        if (line_start_msg->header.stamp != img_msg->header.stamp || line_end_msg->header.stamp != img_msg->header.stamp)
+        {
+            ROS_WARN("线特征时间戳与图像特征帧不匹配，丢弃该帧");
+            line_feature_start_buf.pop();
+            line_feature_end_buf.pop();
+            continue;
+        }
+
+        // 将起点和终点缓冲区中的数据移除
+        line_feature_start_buf.pop();
+        line_feature_end_buf.pop();
+
+        // 获取对齐的IMU数据
         std::vector<sensor_msgs::ImuConstPtr> IMUs;
         while (imu_buf.front()->header.stamp.toSec() < img_msg->header.stamp.toSec() + estimator.td)
         {
-            IMUs.emplace_back(imu_buf.front()); // 将 IMU 数据添加到数组中
-            imu_buf.pop(); // 从 IMU 缓冲区中移除该数据
+            IMUs.emplace_back(imu_buf.front());
+            imu_buf.pop();
         }
-
-        // 注意：将最后一帧 IMU 数据放回到 imu_buf 中
-        // 原因：最后一帧 IMU 信息是被相邻两个视觉帧共享的
         IMUs.emplace_back(imu_buf.front());
-        if (IMUs.empty())
-            ROS_WARN("no imu between two image"); // 如果没有 IMU 数据，发出警告
 
-        measurements.emplace_back(IMUs, img_msg); // 将当前的 IMU 数据和图像帧信息添加到测量结果中
+        // 组合测量数据
+        featuredata measurement;
+        measurement.point_features = img_msg;
+        measurement.line_features_start = line_start_msg;
+        measurement.line_features_end = line_end_msg;
+
+        measurements.emplace_back(IMUs, measurement);
     }
-    return measurements; // 返回最终的测量结果
+    return measurements;
 }
-
 
 // @brief put IMU measurement in buffer and publish status values: Ps/Vs/Rs
 /**
@@ -247,6 +265,43 @@ void feature_callback(const sensor_msgs::PointCloudConstPtr &feature_msg)
     m_buf.lock();
     // 将特征消息推入缓冲区
     feature_buf.push(feature_msg);
+    // 解锁缓冲区
+    m_buf.unlock();
+    // 通知一个等待线程，有新数据可用
+    con.notify_one();
+}
+
+// 把当前帧的所有线特征起点放到 line_feature_start_buf
+void line_feature_start_callback(const sensor_msgs::PointCloudConstPtr &line_feature_start_msg)
+{
+    if (!init_feature)
+    {
+        // 跳过第一个检测到的线特征起点
+        init_line_feature = 1;
+        return;
+    }
+    // 锁定缓冲区以安全地处理线特征数据
+    m_buf.lock();
+    // 将线特征起点消息推入缓冲区
+    line_feature_start_buf.push(line_feature_start_msg);
+    // 解锁缓冲区
+    m_buf.unlock();
+    // 通知一个等待线程，有新数据可用
+    con.notify_one();
+}
+// 把当前帧的所有线特征终点放到 line_feature_end_buf
+void line_feature_end_callback(const sensor_msgs::PointCloudConstPtr &line_feature_end_msg)
+{
+    if (!init_feature)
+    {
+        // 跳过第一个检测到的线特征终点
+        init_line_feature = 1;
+        return;
+    }
+    // 锁定缓冲区以安全地处理线特征数据
+    m_buf.lock();
+    // 将线特征终点消息推入缓冲区
+    line_feature_end_buf.push(line_feature_end_msg);
     // 解锁缓冲区
     m_buf.unlock();
     // 通知一个等待线程，有新数据可用
@@ -352,7 +407,6 @@ void processIMU(sensor_msgs::ImuConstPtr &imu_msg,
     }
 }
 
-
 // 设置重定位帧数据
 void setReloFrame(sensor_msgs::PointCloudConstPtr &relo_msg)
 {
@@ -391,8 +445,7 @@ void setReloFrame(sensor_msgs::PointCloudConstPtr &relo_msg)
     }
 }
 
-
-// @brief 主 VIO 函数，包括初始化和优化
+// @brief 主图像函数，包括初始化和优化
 void processVIO(sensor_msgs::PointCloudConstPtr& img_msg)
 {
     // 创建一个 map 用于存储图像特征点
@@ -429,12 +482,57 @@ void processVIO(sensor_msgs::PointCloudConstPtr& img_msg)
         Eigen::Matrix<double, 7, 1> xyz_uv_velocity;
         xyz_uv_velocity << x, y, z, p_u, p_v, velocity_x, velocity_y;
 
-        // 将相机 ID 和该特征点的信息存储到 map 中
+        // 所选代码行将一对插入到映射中，其中键是特征 ID，值是对的向量。每对由一个相机 ID 和一个包含特征信息的 7 维向量组成。
         image[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
     }
 
     // 调用估计器的 processImage 函数，传入图像特征点和图像的头信息
     estimator.processImage(image, img_msg->header);
+}
+
+// @brief process line features
+// 处理线特征的主函数
+void processline(sensor_msgs::PointCloudConstPtr& line_start_msg, sensor_msgs::PointCloudConstPtr& line_end_msg)
+{
+    // 创建一个 map，用于存储线特征信息
+    map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> lines;
+
+    // 遍历每一个线特征
+    for (unsigned int i = 0; i < line_start_msg->points.size(); i++)
+    {
+        // 获取线特征 ID
+        int v = line_end_msg->channels[0].values[i] + 0.5; // ID 存在终点消息中
+        int line_id = v / NUM_OF_CAM;  // 计算特征点 ID
+        int camera_id = v % NUM_OF_CAM; // 计算相机 ID
+
+        // 提取去畸变坐标系下的起点和终点
+        double start_x = line_start_msg->points[i].x;
+        double start_y = line_start_msg->points[i].y;
+        double start_z = line_start_msg->points[i].z;
+        double end_x = line_end_msg->points[i].x;
+        double end_y = line_end_msg->points[i].y;
+        double end_z = line_end_msg->points[i].z;
+
+        // 提取像素坐标
+        double start_u = line_start_msg->channels[0].values[i];
+        double start_v = line_start_msg->channels[1].values[i];
+        double end_u = line_end_msg->channels[1].values[i];
+        double end_v = line_end_msg->channels[2].values[i];
+
+        // 提取速度
+        double velocity_x = line_end_msg->channels[3].values[i];
+        double velocity_y = line_end_msg->channels[4].values[i];
+
+        // 使用 Eigen 矩阵将起点和终点的去畸变坐标、像素坐标打包成一个 12 维向量
+        Eigen::Matrix<double, 12, 1> start_end_uv_velocity;
+        start_end_uv_velocity << start_x, start_y, start_z, end_x, end_y, end_z, start_u, start_v, end_u, end_v, velocity_x, velocity_y;
+
+        // 将信息以相机 ID 和矩阵对的形式插入到 map 中
+        lines[line_id].emplace_back(camera_id, start_end_uv_velocity);
+    }
+
+    // 调用估计器的方法，将线特征信息传递过去
+    estimator.processlines(lines, line_start_msg->header);
 }
 
 // @brief visualization
@@ -452,15 +550,17 @@ void visualize(sensor_msgs::PointCloudConstPtr &relo_msg,std_msgs::Header &heade
 }
 
 // 主 VIO 函数，包括初始化和优化
-void processMeasurement(vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>>& measurements)
+void processMeasurement(std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, featuredata>>& measurements)
 {
     // 遍历每一个测量对
     for (auto &measurement : measurements)
     {
-        auto img_msg = measurement.second; // 获取图像帧信息
+        auto& img_msg = measurement.second.point_features; // 获取图像帧信息
+        auto& line_start_msg = measurement.second.line_features_start; // 获取线特征起点信息
+        auto& line_end_msg = measurement.second.line_features_end; // 获取线特征终点信息
 
         // 处理与当前图像帧相关的所有 IMU 数据
-        for (auto &imu_msg : measurement.first)
+        for (auto& imu_msg : measurement.first)
             processIMU(imu_msg, img_msg); // 处理 IMU 数据与图像帧的结合
 
         // 设置重定位帧
@@ -471,6 +571,7 @@ void processMeasurement(vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, 
         // 进行 VIO 处理的主函数
         TicToc t_s; // 开始计时
         processVIO(img_msg); // 处理 VIO 计算
+        processline(line_start_msg, line_end_msg); // 处理线特征
 
         double whole_t = t_s.toc(); // 记录处理总时间
         printStatistics(estimator, whole_t); // 打印统计信息
@@ -480,10 +581,9 @@ void processMeasurement(vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, 
         header.frame_id = "world"; // 设置帧 ID
 
         // 在 rviz 中可视化结果
-        visualize(relo_msg, header); // 显示重定位信息
+        visualize(relo_msg, header);
     }
 }
-
 
 // @brief main vio function, including initialization and optimization
 // thread: visual-inertial odometry
@@ -494,13 +594,15 @@ void process()
     {
         // 获取对齐的 IMU 和图像测量数据
         // IMU 的频率高于视觉帧的发布频率，所以每一帧图像都会配对多个 IMU 数据
-        std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>> measurements;
+        // todo: 修改measurements的数据结构，使其包含线段特征
+        std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, featuredata>> measurements;
 
         // 加锁数据缓冲区，防止并发问题
         std::unique_lock<std::mutex> lk(m_buf);
 
         // 等待并检查是否有对齐的数据可用
-        // 一旦 `getMeasurements()` 获取到数据，跳出等待
+        // 一旦getMeasurements()获取到数据，跳出等待
+        // todo: 修改getMeasurements()函数，使其加入线段特征
         con.wait(lk, [&]
                  {
             return (measurements = getMeasurements()).size() != 0;
@@ -552,12 +654,20 @@ int main(int argc, char **argv)
 
     // 订阅 IMU 数据的话题，回调函数为 imu_callback，消息队列大小为 2000，使用 tcpNoDelay 来防止延迟
     ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay());
-    // 订阅特征跟踪器的特征数据，回调函数为 feature_callback
+
+    // 订阅点特征数据，回调函数为 feature_callback
     ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
+    // 订阅线特征起点数据，回调函数为 line_feature_start_callback
+    ros::Subscriber sub_line_start = n.subscribe("/feature_tracker/line_feature_start", 2000, line_feature_start_callback);
+    // 订阅线特征终点数据，回调函数为 line_feature_end_callback
+    ros::Subscriber sub_line_end = n.subscribe("/feature_tracker/line_feature_end", 2000, line_feature_end_callback);
+
     // 订阅重新启动特征跟踪器的话题，回调函数为 restart_callback
     ros::Subscriber sub_restart = n.subscribe("/feature_tracker/restart", 2000, restart_callback);
+
     // 订阅重定位匹配点的话题，回调函数为 relocalization_callback
     ros::Subscriber sub_relo_points = n.subscribe("/pose_graph/match_points", 2000, relocalization_callback);
+
     // 创建一个线程处理测量数据的对齐和处理函数，调用 process 函数
     std::thread measurement_process{process};
     // 进入 ROS 事件循环，等待回调函数处理消息

@@ -146,6 +146,7 @@ class FeatureTracker
     static int n_id; // 用来作为特征点id，每检测到一个新的特征点，就将++n_id作为该特征点的id
 
     std::vector<LineSegment> prev_line_segments,cur_line_segments,forw_line_segments; // 对应的线特征
+    std::vector<LineSegment> prev_un_lines,cur_un_lines; // 归一化相机坐标系下的线特征
     std::vector<LineSegment> line_pts; // 每一帧新提取的线特征
     // 线段的ID
     vector<int> line_ids;       // 线段的ID

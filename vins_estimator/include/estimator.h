@@ -43,6 +43,7 @@ class Estimator
      * @param Input  const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header
      */    
     void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header);
+    void processlines(const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &line, const std_msgs::Header &header);
    
     /**
      * @brief set relocolization frames
@@ -115,7 +116,6 @@ class Estimator
     Vector3d Bgs[(WINDOW_SIZE + 1)];
     std_msgs::Header Headers[(WINDOW_SIZE + 1)];
     double td;
-
     // @param temp buffer
     Matrix3d back_R0, last_R, last_R0;
     Vector3d back_P0, last_P, last_P0;

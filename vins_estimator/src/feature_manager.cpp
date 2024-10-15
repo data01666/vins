@@ -30,9 +30,10 @@ int FeatureManager::getFeatureCount()
     int cnt = 0;
     for (auto &it : feature)
     {
-
+        // 更新每个特征点的使用次数
         it.used_num = it.feature_per_frame.size();
 
+        // 如果特征点在多个帧中被使用并且起始帧在窗口大小范围内，则计数
         if (it.used_num >= 2 && it.start_frame < WINDOW_SIZE - 2)
         {
             cnt++;
@@ -41,29 +42,32 @@ int FeatureManager::getFeatureCount()
     return cnt;
 }
 
-
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
-    ROS_DEBUG("input feature: %d", (int)image.size());
-    ROS_DEBUG("num of feature: %d", getFeatureCount());
-    double parallax_sum = 0;
-    int parallax_num = 0;
-    last_track_num = 0;
+    ROS_DEBUG("输入特征数量: %d", (int)image.size()); // 打印当前帧的特征点数量
+    ROS_DEBUG("特征点总数: %d", getFeatureCount());    // 打印所有特征点的数量
+    double parallax_sum = 0; // 累计视差和
+    int parallax_num = 0;    // 累计计算视差的特征数
+    last_track_num = 0;      // 当前帧中继续被追踪的特征点数
+
+    // 遍历当前帧的每个特征点
     for (auto &id_pts : image)
     {
+        // 将特征点信息存储到 FeaturePerFrame 对象中，包括归一化坐标和其他信息
         FeaturePerFrame f_per_fra(id_pts.second[0].second, td);
 
-        int feature_id = id_pts.first;
+        int feature_id = id_pts.first; // 提取特征点的ID
+        // 在滑窗中查找当前特征点是否已经存在
         auto it = find_if(feature.begin(), feature.end(), [feature_id](const FeaturePerId &it)
-                          {
-            return it.feature_id == feature_id;
-                          });
+                          { return it.feature_id == feature_id; });
 
+        // 如果当前特征点是新特征，添加到特征列表中
         if (it == feature.end())
         {
             feature.push_back(FeaturePerId(feature_id, frame_count));
             feature.back().feature_per_frame.push_back(f_per_fra);
         }
+        // 如果特征点已存在，更新特征信息并增加追踪计数
         else if (it->feature_id == feature_id)
         {
             it->feature_per_frame.push_back(f_per_fra);
@@ -71,11 +75,14 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         }
     }
 
+    // 如果帧数少于2没达到滑窗总数或追踪到的特征点少于20，那么说明次新帧是关键帧，marg_old
     if (frame_count < 2 || last_track_num < 20)
         return true;
 
+    // 计算相邻帧之间的视差，用于判断是否边缘化
     for (auto &it_per_id : feature)
     {
+        // 如果当前特征点在当前帧-2以前出现过而且至少在当前帧-1还在，那么他就是平行特征点
         if (it_per_id.start_frame <= frame_count - 2 &&
             it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1)
         {
@@ -84,15 +91,16 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         }
     }
 
-    if (parallax_num == 0)
+    // 如果没有足够的视差特征点或平均视差小于阈值，则选择边缘化
+    if (parallax_num == 0) // 如果没有符合条件的视差特征点
     {
         return true;
     }
     else
     {
-        ROS_DEBUG("parallax_sum: %lf, parallax_num: %d", parallax_sum, parallax_num);
-        ROS_DEBUG("current parallax: %lf", parallax_sum / parallax_num * FOCAL_LENGTH);
-        return parallax_sum / parallax_num >= MIN_PARALLAX;
+        ROS_DEBUG("视差总和: %lf, 视差特征点数: %d", parallax_sum, parallax_num);
+        ROS_DEBUG("当前平均视差: %lf", parallax_sum / parallax_num * FOCAL_LENGTH);
+        return parallax_sum / parallax_num < MIN_PARALLAX;
     }
 }
 
@@ -354,35 +362,39 @@ void FeatureManager::removeFront(int frame_count)
 
 double FeatureManager::compensatedParallax2(const FeaturePerId &it_per_id, int frame_count)
 {
-    //check the second last frame is keyframe or not
-    //parallax betwwen seconde last frame and third last frame
+    // 选择滑窗内倒数第二帧（frame_i）和倒数第三帧（frame_j），
+    // 用于计算它们之间的视差
     const FeaturePerFrame &frame_i = it_per_id.feature_per_frame[frame_count - 2 - it_per_id.start_frame];
     const FeaturePerFrame &frame_j = it_per_id.feature_per_frame[frame_count - 1 - it_per_id.start_frame];
 
-    double ans = 0;
+    double ans = 0; // 用于存储计算得到的视差值
     Vector3d p_j = frame_j.point;
 
+    // 提取倒数第三帧中点的归一化坐标 (u_j, v_j)
     double u_j = p_j(0);
     double v_j = p_j(1);
 
+    // 提取倒数第二帧的点
     Vector3d p_i = frame_i.point;
     Vector3d p_i_comp;
 
-    //int r_i = frame_count - 2;
-    //int r_j = frame_count - 1;
-    //p_i_comp = ric[camera_id_j].transpose() * Rs[r_j].transpose() * Rs[r_i] * ric[camera_id_i] * p_i;
+    // 对于单目情况，此处不进行视差补偿，直接将 p_i 赋给 p_i_comp
     p_i_comp = p_i;
-    double dep_i = p_i(2);
+
+    // 计算归一化坐标 u_i 和 v_i
+    double dep_i = p_i(2); // 深度值（假设深度值为 1）
     double u_i = p_i(0) / dep_i;
     double v_i = p_i(1) / dep_i;
-    double du = u_i - u_j, dv = v_i - v_j;
+    double du = u_i - u_j, dv = v_i - v_j; // 原始视差计算
 
-    double dep_i_comp = p_i_comp(2);
+    // 计算经过补偿后的归一化坐标 u_i_comp 和 v_i_comp
+    double dep_i_comp = p_i_comp(2); // 补偿后的深度值
     double u_i_comp = p_i_comp(0) / dep_i_comp;
     double v_i_comp = p_i_comp(1) / dep_i_comp;
-    double du_comp = u_i_comp - u_j, dv_comp = v_i_comp - v_j;
+    double du_comp = u_i_comp - u_j, dv_comp = v_i_comp - v_j; // 补偿后的视差计算
 
+    // 取两者中较小的视差值，求平方和的平方根，更新 ans
     ans = max(ans, sqrt(min(du * du + dv * dv, du_comp * du_comp + dv_comp * dv_comp)));
 
-    return ans;
+    return ans; // 返回计算得到的视差值
 }

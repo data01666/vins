@@ -119,45 +119,8 @@ void FeatureTracker::lineflowTrack()
             }
 
             double success_ratio = (double)tracked_count / cur_keypoints.size();
-            /*
-            if (success_ratio > 0.7)  // 成功率高，至少70%的关键点被成功跟踪
-            {
-                std::vector<std::pair<double, double>> tracked_keypoints;
-                for (int j = 0; j < status.size(); j++)
-                {
-                    if (status[j])
-                    {
-                        tracked_keypoints.push_back({ forw_keypoints[j].x, forw_keypoints[j].y });
-                    }
-                }
 
-                // 将新的线段关键点添加到 forward 线段容器
-                LineSegment new_segment = cur_line_segments[i];
-                new_segment.keyPoints = tracked_keypoints;
-                forw_line_segments.push_back(new_segment);
-            }
-            else
-            {
-                // 如果成功率太低，使用DTW进行验证
-                LineSegment new_segment = cur_line_segments[i];
-
-                // 对当前帧的线段关键点与前一帧进行DTW匹配
-                double dtw_distance = computeDTW(cur_line_segments[i].keyPoints, new_segment.keyPoints);
-                double DTW_THRESHOLD = 30;
-
-                if (dtw_distance > DTW_THRESHOLD)
-                {
-                    // 如果DTW距离较大，标记为无效
-                    lstatus[i] = 0;
-                }
-                else
-                {
-                    // 如果DTW验证通过，则将该线段添加到forward线段集合
-                    forw_line_segments.push_back(new_segment);
-                }
-            }*/
-
-            if (success_ratio < 0.3)  // 成功率低，至多30%的关键点被成功跟踪
+            if (success_ratio < 0.3)  // 成功率低丢弃
             {
                 lstatus[i] = 0;
             }
@@ -197,6 +160,7 @@ void FeatureTracker::lineflowTrack()
         reduceVector(prev_line_segments, lstatus);
         reduceVector(cur_line_segments, lstatus);
         reduceVector(forw_line_segments, lstatus);
+        reduceVector(cur_un_lines, lstatus);
         reduceVector(line_ids, lstatus);
 
         ROS_DEBUG("line optical flow tracking costs: %fms", t_o.toc());
@@ -442,6 +406,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
     prev_pts = cur_pts;
     prev_un_pts = cur_un_pts;
     prev_line_segments = cur_line_segments;
+    prev_un_lines = cur_un_lines;
     cur_img = forw_img;
     cur_pts = forw_pts;
     cur_line_segments = forw_line_segments;
@@ -635,7 +600,7 @@ void FeatureTracker::undistortedPoints()
 
 void FeatureTracker::undistortedLines() {
     // 清空之前的无畸变线段和映射表
-    std::vector<LineSegment> cur_un_lines; // 存储当前帧的无畸变线段集合
+    cur_un_lines.clear(); // 存储当前帧的无畸变线段集合
     std::map<int, LineSegment> cur_un_lines_map; // 存储每个线段 ID 与对应无畸变线段的映射关系
 
     // 处理当前帧线段

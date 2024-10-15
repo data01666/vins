@@ -27,7 +27,7 @@ vector<uchar> r_status;
 vector<float> r_err;
 queue<sensor_msgs::ImageConstPtr> img_buf;
 
-ros::Publisher pub_img,pub_match,pub_line;
+ros::Publisher pub_img,pub_match,pub_line_start,pub_line_end;
 ros::Publisher pub_restart;
 
 FeatureTracker trackerData[NUM_OF_CAM];
@@ -155,17 +155,22 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         sensor_msgs::ChannelFloat32 velocity_y_of_point;
 
         // 线段相关数据结构
-       sensor_msgs::ChannelFloat32 id_of_line;
-       sensor_msgs::PointCloudPtr feature_line(new sensor_msgs::PointCloud);
-       sensor_msgs::ChannelFloat32 start;
-       sensor_msgs::ChannelFloat32 end;
-       sensor_msgs::ChannelFloat32 velocity_x_of_line;
-       sensor_msgs::ChannelFloat32 velocity_y_of_line;
+        sensor_msgs::ChannelFloat32 id_of_line;
+        sensor_msgs::PointCloudPtr feature_line_start(new sensor_msgs::PointCloud);
+        sensor_msgs::PointCloudPtr feature_line_end(new sensor_msgs::PointCloud);
+        sensor_msgs::ChannelFloat32 start_x;
+        sensor_msgs::ChannelFloat32 start_y;
+        sensor_msgs::ChannelFloat32 end_x;
+        sensor_msgs::ChannelFloat32 end_y;
+        sensor_msgs::ChannelFloat32 velocity_x_of_line;
+        sensor_msgs::ChannelFloat32 velocity_y_of_line;
 
         feature_points->header = img_msg->header;
         feature_points->header.frame_id = "world";
-        feature_line->header = img_msg->header; // 确保线段点云的头部信息
-        feature_line->header.frame_id = "world";
+        feature_line_start->header = img_msg->header; // 确保线段点云的头部信息
+        feature_line_start->header.frame_id = "world";
+        feature_line_end->header = img_msg->header;
+        feature_line_end->header.frame_id = "world";
 
         vector<set<int>> hash_ids(NUM_OF_CAM);
         for (int i = 0; i < NUM_OF_CAM; i++)
@@ -175,6 +180,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             auto &ids = trackerData[i].ids;
             auto &pts_velocity = trackerData[i].pts_velocity;
 
+            auto &cur_un_line = trackerData[i].cur_un_lines;
             auto &line_segments = trackerData[i].cur_line_segments; // 当前线段
             auto &line_ids = trackerData[i].line_ids; // 线段 ID
             auto &line_velocity = trackerData[i].line_velocity; // 线段速度
@@ -191,9 +197,12 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
                     p.y = un_pts[j].y;
                     p.z = 1;
 
+                    // p存贮的是归一化平面坐标
                     feature_points->points.push_back(p);
                     id_of_point.values.push_back(p_id * NUM_OF_CAM + i);
+                    // u_of_point存储的是像素坐标
                     u_of_point.values.push_back(cur_pts[j].x);
+                    // v_of_point存储的是像素坐标
                     v_of_point.values.push_back(cur_pts[j].y);
                     velocity_x_of_point.values.push_back(pts_velocity[j].x);
                     velocity_y_of_point.values.push_back(pts_velocity[j].y);
@@ -201,29 +210,30 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             }
 
             // 处理线段特征
-            for (unsigned int j = 0; j < line_segments.size(); j++)
+            for (unsigned int j = 0; j < line_ids.size(); j++)
             {
-                const auto &line = line_segments[j];
+
                 geometry_msgs::Point32 start_point, end_point;
 
-                start_point.x = line.sx;
-                start_point.y = line.sy;
+                start_point.x = cur_un_line[j].sx;
+                start_point.y = cur_un_line[j].sy;
                 start_point.z = 1;
-                end_point.x = line.ex;
-                end_point.y = line.ey;
+                end_point.x = cur_un_line[j].ex;
+                end_point.y = cur_un_line[j].ey;
                 end_point.z = 1;
 
-                feature_line->points.push_back(start_point);
-                feature_line->points.push_back(end_point);
+                feature_line_start->points.push_back(start_point);
+                feature_line_end->points.push_back(end_point);
                 id_of_line.values.push_back(line_ids[j] * NUM_OF_CAM + i); // 假设 line_ids[j] 是有效的线段 ID
                 velocity_x_of_line.values.push_back(line_velocity[j].x); // 假设有线段速度
                 velocity_y_of_line.values.push_back(line_velocity[j].y);
 
                 // 填充 start 和 end 通道
-                start.values.push_back(line.sx);
-                start.values.push_back(line.sy);
-                end.values.push_back(line.ex);
-                end.values.push_back(line.ey);
+                const auto &line = line_segments[j];
+                start_x.values.push_back(line.sx);
+                start_y.values.push_back(line.sy);
+                end_x.values.push_back(line.ex);
+                end_y.values.push_back(line.ey);
             }
         }
 
@@ -235,11 +245,13 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         feature_points->channels.push_back(velocity_y_of_point);
 
         // 将线段特征信息添加到消息中
-        feature_line->channels.push_back(id_of_line);
-        feature_line->channels.push_back(start);
-        feature_line->channels.push_back(end);
-        feature_line->channels.push_back(velocity_x_of_line);
-        feature_line->channels.push_back(velocity_y_of_line);
+        feature_line_start->channels.push_back(start_x);
+        feature_line_start->channels.push_back(start_y);
+        feature_line_end->channels.push_back(id_of_line);
+        feature_line_end->channels.push_back(end_x);
+        feature_line_end->channels.push_back(end_y);
+        feature_line_end->channels.push_back(velocity_x_of_line);
+        feature_line_end->channels.push_back(velocity_y_of_line);
 
         ROS_DEBUG("publish %f, at %f", feature_points->header.stamp.toSec(), ros::Time::now().toSec());
 
@@ -251,7 +263,8 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         else
         {
             pub_img.publish(feature_points);
-            pub_line.publish(feature_line); // 发布线段特征
+            pub_line_start.publish(feature_line_start); // 发布线段特征
+            pub_line_end.publish(feature_line_end);
         }
 
         // show track
@@ -324,7 +337,8 @@ int main(int argc, char **argv)
     ros::Subscriber sub_img = n.subscribe(IMAGE_TOPIC, 100, img_callback);
 
     pub_img = n.advertise<sensor_msgs::PointCloud>("feature", 1000);
-    pub_line = n.advertise<sensor_msgs::PointCloud>("line_feature", 1000);
+    pub_line_start = n.advertise<sensor_msgs::PointCloud>("line_feature_start", 1000);
+    pub_line_end = n.advertise<sensor_msgs::PointCloud>("line_feature_end", 1000);
     pub_match = n.advertise<sensor_msgs::Image>("feature_img",1000);
     pub_restart = n.advertise<std_msgs::Bool>("restart",1000);
     /*
