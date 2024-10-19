@@ -257,3 +257,92 @@ void ProjectionFactor::check(double **parameters)
     }
     std::cout << num_jacobian << std::endl;
 }
+
+/*
+Eigen::Matrix2d lineProjectionFactor::line_sqrt_info;
+// 构造函数，接受两个线段的起点和终点
+lineProjectionFactor::lineProjectionFactor(const Eigen::Vector3d &_start_i, const Eigen::Vector3d &_end_i,
+    const Eigen::Vector3d &_start_j, const Eigen::Vector3d &_end_j)
+    : start_i(_start_i), end_i(_end_i), start_j(_start_j), end_j(_end_j)
+{
+    #ifdef UNIT_SPHERE_ERROR
+    // 定义两个辅助向量 b1 和 b2，用于计算单位球面上的切线基底
+    Eigen::Vector3d b1, b2;
+    Eigen::Vector3d a1 = _start_j.normalized();
+    Eigen::Vector3d a2 = _end_j.normalized();
+    Eigen::Vector3d tmp1(0, 0, 1);
+    Eigen::Vector3d tmp2(0, 0, 1);
+    if(a1 == tmp)
+        tmp << 1, 0, 0;
+    if(a2 == tmp)
+        tmp << 1, 0, 0;
+    b1 = (tmp1 - a1 * (a1.transpose() * tmp1)).normalized();
+    b2 = a1.cross(b1);
+    line_tangent_base.block<1, 3>(0, 0) = b1.transpose();
+    line_tangent_base.block<1, 3>(1, 0) = b2.transpose();
+    b1 = (tmp2 - a2 * (a2.transpose() * tmp2)).normalized();
+    b2 = a2.cross(b1);
+    line_tangent_base.block<1, 3>(2, 0) = b1.transpose();
+    line_tangent_base.block<1, 3>(3, 0) = b2.transpose();
+    #endif
+}
+
+// 计算投影误差和雅可比矩阵
+// 计算投影误差和雅可比矩阵
+bool lineProjectionFactor::Evaluate(double const *const *parameters, double *residuals,double **jacobians) const
+{
+    // 提取关键帧 i 的平移和旋转
+    Eigen::Vector3d Pi(parameters[0][0], parameters[0][1], parameters[0][2]);
+    Eigen::Quaterniond Qi(parameters[0][6], parameters[0][3], parameters[0][4], parameters[0][5]);
+
+    // 提取关键帧 j 的平移和旋转
+    Eigen::Vector3d Pj(parameters[1][0], parameters[1][1], parameters[1][2]);
+    Eigen::Quaterniond Qj(parameters[1][6], parameters[1][3], parameters[1][4], parameters[1][5]);
+
+    // 提取相机与 IMU 之间的外参（平移和旋转）
+    Eigen::Vector3d tic(parameters[2][0], parameters[2][1], parameters[2][2]);
+    Eigen::Quaterniond qic(parameters[2][6], parameters[2][3], parameters[2][4], parameters[2][5]);
+
+    // 提取特征点的逆深度
+    double start_dep_i = parameters[4][0];
+    double end_dep_i = parameters[4][1];
+
+    // 计算特征点在各个坐标系下的位置
+    Eigen::Vector3d start_camera_i = start_i / start_dep_i;
+    Eigen::Vector3d end_camera_i = end_i / end_dep_i;
+    Eigen::Vector3d start_imu_i = qic * start_camera_i + tic;
+    Eigen::Vector3d end_imu_i = qic * end_camera_i + tic;
+    Eigen::Vector3d start_w = Qi * start_imu_i + Pi;
+    Eigen::Vector3d end_w = Qi * end_imu_i + Pi;
+    Eigen::Vector3d start_imu_j = Qj.inverse() * (start_w - Pj);
+    Eigen::Vector3d end_imu_j = Qj.inverse() * (end_w - Pj);
+    Eigen::Vector3d start_camera_j = qic.inverse() * (start_imu_j - tic);
+    Eigen::Vector3d end_camera_j = qic.inverse() * (end_imu_j - tic);
+
+    // 使用 Eigen::Map 映射 residuals 指针为 Eigen 向量，方便操作
+    Eigen::Map<Eigen::Vector4d> residual(residuals);  // 4D残差向量
+
+#ifdef UNIT_SPHERE_ERROR
+    // 使用单位球面误差：计算特征点在单位球面上的投影误差
+    residual.head<2>() = line_tangent_base.block<2, 3>(0, 0) * (start_camera_j.normalized() - start_j.normalized());
+    residual.tail<2>() = line_tangent_base.block<2, 3>(2, 0) * (end_camera_j.normalized() - end_j.normalized());
+#else
+    // 使用普通重投影误差：计算特征点在相机归一化平面的投影误差
+    double start_dep_j = start_camera_j.z();
+    double end_dep_j = end_camera_j.z();
+    residual.head<2>() = (start_camera_j / start_dep_j).head<2>() - start_j.head<2>();
+    residual.tail<2>() = (end_camera_j / end_dep_j).head<2>() - end_j.head<2>();
+#endif
+
+    // 使用平方根信息矩阵对误差进行加权
+    residual = line_sqrt_info * residual;
+
+    // 雅可比矩阵计算（这里根据具体情况补充）
+    if (jacobians)
+    {
+        // 处理关键帧i和j位姿的雅可比矩阵，以及逆深度的雅可比矩阵
+    }
+
+    return true;
+}
+*/

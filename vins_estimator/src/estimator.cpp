@@ -97,7 +97,6 @@ void Estimator::clearState()
     drift_correct_t = Vector3d::Zero();
 }
 
-
 void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
 {
     /* 这部分代码的作用是为以下数据提供初始值或进行初始化：
@@ -171,11 +170,15 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     gyr_0 = angular_velocity;
 }
 
-void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header)
+void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image,const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &lines, const std_msgs::Header &header)
 {
     // 1. 根据视差检查是否需要边缘化旧帧或次新帧，并将特征添加到特征管理器
     ROS_DEBUG("新图像帧到达 ------------------------------------------");
     ROS_DEBUG("添加特征点数量 %lu", image.size());
+
+    ROS_DEBUG("新线特征帧到达 ------------------------------------------");
+    addline(lines, header);
+
     //true：上一帧是关键帧，marg_old; false:上一帧不是关键帧marg_second_new
     //TODO frame_count指的是次新帧还是最新帧？
     if (f_manager.addFeatureCheckParallax(frame_count, image, td))
@@ -214,10 +217,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         backend.backend(this);  // 调用后端优化模块
 }
 
-void Estimator::processlines(const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &lines, const std_msgs::Header &header)
+void Estimator::addline(const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>> > &lines, const std_msgs::Header &header)
 {
-    ROS_DEBUG("新线特征帧到达 ------------------------------------------");
-
     // 遍历所有线特征
     for (const auto &line : lines)
     {
@@ -259,18 +260,6 @@ void Estimator::processlines(const map<int, vector<pair<int, Eigen::Matrix<doubl
             }
         }
     }
-
-    // 判断初始化或优化阶段
-    if (solver_flag == INITIAL)
-    {
-        initialLine(header);  // 初始化阶段可能需要处理线特征
-    }
-    else
-    {
-        backend.backend(this);  // 非线性优化阶段
-    }
-
-    ROS_DEBUG("线特征处理完成，当前帧索引: %d", frame_count);
 }
 
 void Estimator::calibrationExRotation()
@@ -296,31 +285,48 @@ void Estimator::calibrationExRotation()
 
 void Estimator::initial(const std_msgs::Header &header)
 {
+    // 如果当前帧数等于窗口大小（即达到预设帧数），则开始初始化
     if (frame_count == WINDOW_SIZE)
     {
         bool result = false;
+
+        // 当不需要估计外参时，检查时间条件是否满足，确保初始化有足够帧数参与
         if( ESTIMATE_EXTRINSIC != 2 && (header.stamp.toSec() - initial_timestamp) > 0.1)
         {
+            // 执行视觉-惯性联合初始化，并返回初始化结果
             result = intializer.initialStructure(this);
+            // 更新初始化时间戳为当前帧时间戳
             initial_timestamp = header.stamp.toSec();
         }
+
+        // 如果初始化成功，则执行一次非线性优化
         if(result)
         {
+            // 将solver_flag设置为非线性优化模式
             solver_flag = NON_LINEAR;
+            // 调用后端优化，进行位姿优化和调整
             backend.solveOdometry(this);
+            // 滑动窗口，丢弃最早的一帧数据，以便加入新帧
             backend.slideWindow(this);
+            // 移除特征管理中跟踪失败的特征点
             f_manager.removeFailures();
+
+            // 打印初始化完成的日志信息
             ROS_INFO("Initialization finish!");
+
+            // 存储当前帧相对于第一帧的位姿
             last_R = Rs[WINDOW_SIZE];
             last_P = Ps[WINDOW_SIZE];
             last_R0 = Rs[0];
-            last_P0 = Ps[0];               
+            last_P0 = Ps[0];
         }
         else
-            backend.slideWindow(this);
+            // 如果初始化不成功，则直接进行滑窗操作，以加入新数据继续尝试初始化
+                backend.slideWindow(this);
     }
     else
-        frame_count++;
+        // 如果未达到窗口大小，增加帧计数以准备初始化
+            frame_count++;
 }
 
 void Estimator::setReloFrame(double _frame_stamp, int _frame_index, vector<Vector3d> &_match_points, Vector3d _relo_t, Matrix3d _relo_r)

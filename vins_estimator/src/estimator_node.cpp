@@ -446,7 +446,7 @@ void setReloFrame(sensor_msgs::PointCloudConstPtr &relo_msg)
 }
 
 // @brief 主图像函数，包括初始化和优化
-void processVIO(sensor_msgs::PointCloudConstPtr& img_msg)
+void processVIO(sensor_msgs::PointCloudConstPtr& img_msg,sensor_msgs::PointCloudConstPtr& line_start_msg, sensor_msgs::PointCloudConstPtr& line_end_msg)
 {
     // 创建一个 map 用于存储图像特征点
     // key 是特征点的 ID，value 是一个包含相机 ID 和特征信息的向量
@@ -485,15 +485,7 @@ void processVIO(sensor_msgs::PointCloudConstPtr& img_msg)
         // 所选代码行将一对插入到映射中，其中键是特征 ID，值是对的向量。每对由一个相机 ID 和一个包含特征信息的 7 维向量组成。
         image[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
     }
-
-    // 调用估计器的 processImage 函数，传入图像特征点和图像的头信息
-    estimator.processImage(image, img_msg->header);
-}
-
-// @brief process line features
-// 处理线特征的主函数
-void processline(sensor_msgs::PointCloudConstPtr& line_start_msg, sensor_msgs::PointCloudConstPtr& line_end_msg)
-{
+    // 线特征
     // 创建一个 map，用于存储线特征信息
     map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> lines;
 
@@ -531,8 +523,8 @@ void processline(sensor_msgs::PointCloudConstPtr& line_start_msg, sensor_msgs::P
         lines[line_id].emplace_back(camera_id, start_end_uv_velocity);
     }
 
-    // 调用估计器的方法，将线特征信息传递过去
-    estimator.processlines(lines, line_start_msg->header);
+    // 调用估计器的 processImage 函数，传入图像特征点和图像的头信息
+    estimator.processImage(image,lines, img_msg->header);
 }
 
 // @brief visualization
@@ -570,8 +562,7 @@ void processMeasurement(std::vector<std::pair<std::vector<sensor_msgs::ImuConstP
 
         // 进行 VIO 处理的主函数
         TicToc t_s; // 开始计时
-        processVIO(img_msg); // 处理 VIO 计算
-        processline(line_start_msg, line_end_msg); // 处理线特征
+        processVIO(img_msg,line_start_msg, line_end_msg); // 处理 VIO 计算,加入线特征
 
         double whole_t = t_s.toc(); // 记录处理总时间
         printStatistics(estimator, whole_t); // 打印统计信息
@@ -658,9 +649,9 @@ int main(int argc, char **argv)
     // 订阅点特征数据，回调函数为 feature_callback
     ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
     // 订阅线特征起点数据，回调函数为 line_feature_start_callback
-    ros::Subscriber sub_line_start = n.subscribe("/feature_tracker/line_feature_start", 2000, line_feature_start_callback);
+    //ros::Subscriber sub_line_start = n.subscribe("/feature_tracker/line_feature_start", 2000, line_feature_start_callback);
     // 订阅线特征终点数据，回调函数为 line_feature_end_callback
-    ros::Subscriber sub_line_end = n.subscribe("/feature_tracker/line_feature_end", 2000, line_feature_end_callback);
+    //ros::Subscriber sub_line_end = n.subscribe("/feature_tracker/line_feature_end", 2000, line_feature_end_callback);
 
     // 订阅重新启动特征跟踪器的话题，回调函数为 restart_callback
     ros::Subscriber sub_restart = n.subscribe("/feature_tracker/restart", 2000, restart_callback);

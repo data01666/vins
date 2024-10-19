@@ -192,32 +192,46 @@ namespace cv {
 
 bool MotionEstimator::solveRelativeRT(const vector<pair<Vector3d, Vector3d>> &corres, Matrix3d &Rotation, Vector3d &Translation)
 {
+    // 如果特征点数量大于等于15，继续处理
     if (corres.size() >= 15)
     {
         vector<cv::Point2f> ll, rr;
+
+        // 遍历所有特征点配对，将其转换为OpenCV格式
         for (int i = 0; i < int(corres.size()); i++)
         {
             ll.push_back(cv::Point2f(corres[i].first(0), corres[i].first(1)));
             rr.push_back(cv::Point2f(corres[i].second(0), corres[i].second(1)));
         }
-        cv::Mat mask;
-        cv::Mat E = cv::findFundamentalMat(ll, rr, cv::FM_RANSAC, 0.3 / 460, 0.99, mask);
-        cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1);
-        cv::Mat rot, trans;
-        int inlier_cnt = cv::recoverPose(E, ll, rr, cameraMatrix, rot, trans, mask);
-        //cout << "inlier_cnt " << inlier_cnt << endl;
 
+        cv::Mat mask;
+
+        // 计算本质矩阵E
+        cv::Mat E = cv::findFundamentalMat(ll, rr, cv::FM_RANSAC, 0.3 / 460, 0.99, mask);
+
+        // 假设相机内参矩阵为单位矩阵
+        cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1);
+
+        cv::Mat rot, trans;
+
+        // 从本质矩阵E恢复旋转矩阵和平移向量
+        int inlier_cnt = cv::recoverPose(E, ll, rr, cameraMatrix, rot, trans, mask);
+
+        // 将OpenCV的Mat数据转换为Eigen格式
         Eigen::Matrix3d R;
         Eigen::Vector3d T;
         for (int i = 0; i < 3; i++)
-        {   
+        {
             T(i) = trans.at<double>(i, 0);
             for (int j = 0; j < 3; j++)
                 R(i, j) = rot.at<double>(i, j);
         }
 
+        // 设置输出的相对位姿：旋转矩阵和平移向量
         Rotation = R.transpose();
         Translation = -R.transpose() * T;
+
+        // 如果通过内点数量检查，内点数大于12，则认为求解成功
         if(inlier_cnt > 12)
             return true;
         else
@@ -225,6 +239,4 @@ bool MotionEstimator::solveRelativeRT(const vector<pair<Vector3d, Vector3d>> &co
     }
     return false;
 }
-
-
 

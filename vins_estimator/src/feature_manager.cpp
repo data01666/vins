@@ -42,6 +42,27 @@ int FeatureManager::getFeatureCount()
     return cnt;
 }
 
+int FeatureManager::getLineFeatureCount()
+{
+    int cnt = 0;
+
+    // 遍历所有线特征
+    for (auto &it : line_feature)
+    {
+        // 记录每个线特征被使用的次数
+        it.used_num = it.feature_per_frame.size();
+
+        // 如果线特征至少被使用 2 次且起始帧不在窗口末端，计数
+        if (it.used_num >= 2 && it.start_frame < WINDOW_SIZE - 2)
+        {
+            cnt++;
+        }
+    }
+
+    // 只返回线特征的数量
+    return cnt;
+}
+
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
     ROS_DEBUG("输入特征数量: %d", (int)image.size()); // 打印当前帧的特征点数量
@@ -165,6 +186,32 @@ void FeatureManager::setDepth(const VectorXd &x)
             it_per_id.solve_flag = 1;
     }
 }
+void FeatureManager::setLineDepth(const VectorXd &x)
+{
+    int line_feature_index = -1;
+    for (auto &it_per_id : line_feature)
+    {
+        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
+            continue;
+
+        // 设置起点和终点的深度
+        line_feature_index++;  // 递增一次索引
+        it_per_id.estimated_depth_start = 1.0 / x(2 * line_feature_index);      // 更新起点的深度
+        it_per_id.estimated_depth_end = 1.0 / x(2 * line_feature_index + 1);    // 更新终点的深度
+
+        // 检查起点和终点的深度是否有效
+        if (it_per_id.estimated_depth_start < 0 || it_per_id.estimated_depth_end < 0)
+        {
+            it_per_id.solve_flag = 2;  // 线特征解算失败
+        }
+        else
+        {
+            it_per_id.solve_flag = 1;  // 线特征解算成功
+        }
+    }
+}
+
 
 void FeatureManager::removeFailures()
 {
@@ -174,6 +221,19 @@ void FeatureManager::removeFailures()
         it_next++;
         if (it->solve_flag == 2)
             feature.erase(it);
+    }
+}
+
+void FeatureManager::removeLineFailures()// todo:新增线特征移除失败函数
+{
+    for (auto it = line_feature.begin(), it_next = line_feature.begin();
+         it != line_feature.end(); it = it_next)
+    {
+        it_next++;
+        if (it->solve_flag == 2) // 判断线特征的求解状态是否为失败
+        {
+            line_feature.erase(it); // 移除失败的线特征
+        }
     }
 }
 
@@ -207,32 +267,71 @@ VectorXd FeatureManager::getDepthVector()
     return dep_vec;
 }
 
+VectorXd FeatureManager::getLineDepthVector()
+{
+    // 获取线特征的总数，每个线特征包含两个端点
+    VectorXd dep_vec(2 * getLineFeatureCount()); // 只考虑每个线特征的数量
+
+    int line_feature_index = -1;
+
+    // 遍历所有线特征
+    for (auto &it_per_id : line_feature)
+    {
+        // 记录线特征被使用的次数
+        it_per_id.used_num = it_per_id.feature_per_frame.size();
+
+        // 如果线特征被使用至少 2 次且起始帧不在窗口末端，则处理该线特征
+        if (it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2)
+            continue;
+#if 1
+        dep_vec(++line_feature_index) = 1. / it_per_id.estimated_depth_start;
+        dep_vec(++line_feature_index) = 1. / it_per_id.estimated_depth_end;
+#else
+        dep_vec(++line_feature_index) = it_per_id->estimated_depth_start;
+        dep_vec(++line_feature_index) = it_per_id->estimated_depth_end;
+#endif
+    }
+    return dep_vec;
+}
+
 void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
 {
+    // 遍历所有特征点
     for (auto &it_per_id : feature)
     {
+        // 计算特征点被观测到的次数
         it_per_id.used_num = it_per_id.feature_per_frame.size();
+
+        // 如果该特征点至少被两帧以上观测到，且起始帧在窗口中（非末两帧），继续处理
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
 
+        // 如果已经估计了深度，则跳过该特征点
         if (it_per_id.estimated_depth > 0)
             continue;
+
         int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
 
+        // 系统默认只有一个相机，所以这里是断言只有一个相机
         ROS_ASSERT(NUM_OF_CAM == 1);
+
+        // 构建 SVD 矩阵，用于三角化求解特征点的深度
         Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
         int svd_idx = 0;
 
+        // 设置第一帧的投影矩阵 P0
         Eigen::Matrix<double, 3, 4> P0;
         Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
         Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
         P0.leftCols<3>() = Eigen::Matrix3d::Identity();
         P0.rightCols<1>() = Eigen::Vector3d::Zero();
 
+        // 遍历该特征点被观测到的所有帧
         for (auto &it_per_frame : it_per_id.feature_per_frame)
         {
             imu_j++;
 
+            // 设置每一帧的投影矩阵
             Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
             Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
             Eigen::Vector3d t = R0.transpose() * (t1 - t0);
@@ -240,27 +339,110 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
             Eigen::Matrix<double, 3, 4> P;
             P.leftCols<3>() = R.transpose();
             P.rightCols<1>() = -R.transpose() * t;
+
+            // 获取特征点在该帧下的归一化坐标
             Eigen::Vector3d f = it_per_frame.point.normalized();
+
+            // 构建 SVD 矩阵的行
             svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
             svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
 
             if (imu_i == imu_j)
                 continue;
         }
+
+        // 断言 SVD 矩阵的行数是否正确
         ROS_ASSERT(svd_idx == svd_A.rows());
+
+        // 通过 SVD 求解特征点的深度
         Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
         double svd_method = svd_V[2] / svd_V[3];
-        //it_per_id->estimated_depth = -b / A;
-        //it_per_id->estimated_depth = svd_V[2] / svd_V[3];
 
+        // 将求得的深度值存储到特征点中
         it_per_id.estimated_depth = svd_method;
-        //it_per_id->estimated_depth = INIT_DEPTH;
 
+        // 如果深度小于某个阈值，则将深度初始化为默认深度
         if (it_per_id.estimated_depth < 0.1)
         {
             it_per_id.estimated_depth = INIT_DEPTH;
         }
+    }
+}
+void FeatureManager::triangulateLinepoint(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
+{
+    for (auto &it_per_id : line_feature)
+    {
+        // 起点三角化
+        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
+            continue;
 
+        int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
+
+        // Triangulate start point
+        Eigen::MatrixXd svd_A_start(2 * it_per_id.feature_per_frame.size(), 4);
+        int svd_idx_start = 0;
+
+        Eigen::Matrix<double, 3, 4> P0_start;
+        Eigen::Vector3d t0_start = Ps[imu_i] + Rs[imu_i] * tic[0];
+        Eigen::Matrix3d R0_start = Rs[imu_i] * ric[0];
+        P0_start.leftCols<3>() = Eigen::Matrix3d::Identity();
+        P0_start.rightCols<1>() = Eigen::Vector3d::Zero();
+
+        for (auto &it_per_frame : it_per_id.feature_per_frame)
+        {
+            imu_j++;
+
+            Eigen::Vector3d t1_start = Ps[imu_j] + Rs[imu_j] * tic[0];
+            Eigen::Matrix3d R1_start = Rs[imu_j] * ric[0];
+            Eigen::Vector3d t_start = R0_start.transpose() * (t1_start - t0_start);
+            Eigen::Matrix3d R_start = R0_start.transpose() * R1_start;
+
+            Eigen::Matrix<double, 3, 4> P_start;
+            P_start.leftCols<3>() = R_start.transpose();
+            P_start.rightCols<1>() = -R_start.transpose() * t_start;
+
+            Eigen::Vector3d f_start = it_per_frame.start_point.normalized();
+            svd_A_start.row(svd_idx_start++) = f_start[0] * P_start.row(2) - f_start[2] * P_start.row(0);
+            svd_A_start.row(svd_idx_start++) = f_start[1] * P_start.row(2) - f_start[2] * P_start.row(1);
+        }
+
+        Eigen::Vector4d svd_V_start = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A_start, Eigen::ComputeThinV).matrixV().rightCols<1>();
+        double svd_depth_start = svd_V_start[2] / svd_V_start[3];
+        it_per_id.estimated_depth_start = svd_depth_start;
+
+        // 终点三角化（类似于起点）
+        imu_j = imu_i - 1;
+        Eigen::MatrixXd svd_A_end(2 * it_per_id.feature_per_frame.size(), 4);
+        int svd_idx_end = 0;
+
+        Eigen::Matrix<double, 3, 4> P0_end;
+        Eigen::Vector3d t0_end = Ps[imu_i] + Rs[imu_i] * tic[0];
+        Eigen::Matrix3d R0_end = Rs[imu_i] * ric[0];
+        P0_end.leftCols<3>() = Eigen::Matrix3d::Identity();
+        P0_end.rightCols<1>() = Eigen::Vector3d::Zero();
+
+        for (auto &it_per_frame : it_per_id.feature_per_frame)
+        {
+            imu_j++;
+
+            Eigen::Vector3d t1_end = Ps[imu_j] + Rs[imu_j] * tic[0];
+            Eigen::Matrix3d R1_end = Rs[imu_j] * ric[0];
+            Eigen::Vector3d t_end = R0_end.transpose() * (t1_end - t0_end);
+            Eigen::Matrix3d R_end = R0_end.transpose() * R1_end;
+
+            Eigen::Matrix<double, 3, 4> P_end;
+            P_end.leftCols<3>() = R_end.transpose();
+            P_end.rightCols<1>() = -R_end.transpose() * t_end;
+
+            Eigen::Vector3d f_end = it_per_frame.end_point.normalized();
+            svd_A_end.row(svd_idx_end++) = f_end[0] * P_end.row(2) - f_end[2] * P_end.row(0);
+            svd_A_end.row(svd_idx_end++) = f_end[1] * P_end.row(2) - f_end[2] * P_end.row(1);
+        }
+
+        Eigen::Vector4d svd_V_end = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A_end, Eigen::ComputeThinV).matrixV().rightCols<1>();
+        double svd_depth_end = svd_V_end[2] / svd_V_end[3];
+        it_per_id.estimated_depth_end = svd_depth_end;
     }
 }
 

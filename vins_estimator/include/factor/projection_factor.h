@@ -41,4 +41,22 @@ public:
     static Eigen::Matrix2d sqrt_info;  // 误差加权的平方根信息矩阵
     static double sum_t;               // 累积计时器，用于统计Evaluate函数的总运行时间
 };
+/*
+class lineProjectionFactor : public ceres::SizedCostFunction<4, 7, 7, 7, 1>
+{
+public:
+    // 构造函数
+    lineProjectionFactor(const Eigen::Vector3d &_start_i, const Eigen::Vector3d &_end_i,
+                         const Eigen::Vector3d &_start_j, const Eigen::Vector3d &_end_j);
 
+    // Evaluate函数，计算投影误差和雅可比矩阵（如果需要）
+    virtual bool Evaluate(double const *const *parameters, double *residuals, double **jacobians) const;
+
+    // 成员变量
+    Eigen::Vector3d start_i, end_i; // 起点和终点在帧i的3D坐标
+    Eigen::Vector3d start_j, end_j; // 起点和终点在帧j的3D坐标
+    Eigen::Matrix<double, 4, 3> line_tangent_base; // 单位球面误差时的切平面基，用于降维处理
+
+    static Eigen::Matrix2d line_sqrt_info;  // 信息矩阵
+};
+*/
