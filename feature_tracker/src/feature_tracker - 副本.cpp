@@ -83,84 +83,110 @@ void FeatureTracker::flowTrack()
 
 void FeatureTracker::lineflowTrack()
 {
-    if (cur_line_segments.size() > 0)
+    if (PUB_THIS_FRAME)
+    {
+        if (cur_line_segments.size() > 0)
     {
         TicToc t_o;
-        std::vector<uchar> lstatus(cur_line_segments.size(), 1); // 初始化线段状态，默认有效
+        std::vector<uchar> lstatus(cur_line_segments.size(), 1); // 初始化线段的状态，默认值为1（有效）
 
         for (int i = 0; i < cur_line_segments.size(); i++)
         {
-            LineSegment &cur_segment = cur_line_segments[i];
-            cv::Point2f start(static_cast<float>(cur_segment.sx), static_cast<float>(cur_segment.sy));
-            cv::Point2f end(static_cast<float>(cur_segment.ex), static_cast<float>(cur_segment.ey));
+            std::vector<cv::Point2f> cur_keypoints;
 
-            // 光流跟踪线段的起点和终点
-            std::vector<cv::Point2f> start_points = { start };
-            std::vector<cv::Point2f> end_points = { end };
-            std::vector<cv::Point2f> forw_start_points(1), forw_end_points(1);  // 光流跟踪后的点数组
-            std::vector<uchar> status_start(1), status_end(1);  // 独立的状态数组
-            std::vector<float> err_start(1), err_end(1);  // 错误数组
-
-            // 对起点和终点分别进行光流跟踪
-            cv::calcOpticalFlowPyrLK(cur_img, forw_img, start_points, forw_start_points, status_start, err_start, cv::Size(21, 21), 3);
-            cv::calcOpticalFlowPyrLK(cur_img, forw_img, end_points, forw_end_points, status_end, err_end, cv::Size(21, 21), 3);
-
-            // 将跟踪到的结果赋值给起点和终点
-            cv::Point2f forw_start = forw_start_points[0];
-            cv::Point2f forw_end = forw_end_points[0];
-
-            // 只有当起点和终点至少有一个成功跟踪时就进行搜索
-            if (status_start[0] || status_end[0])
+            // 将当前帧线段关键点从 std::pair 转换为 cv::Point2f
+            for (const auto& kp : cur_line_segments[i].keyPoints)
             {
-                // 获取图像的尺寸
-                int img_width = forw_img.cols;
-                int img_height = forw_img.rows;
+                cur_keypoints.push_back(cv::Point2f(static_cast<float>(kp.first), static_cast<float>(kp.second)));
+            }
 
-                // 定义线段周围的搜索区域, 以扩展区域为中心
-                int x = std::max(0, std::min(static_cast<int>(std::min(forw_start.x, forw_end.x) - MIN_DIST), img_width));
-                int y = std::max(0, std::min(static_cast<int>(std::min(forw_start.y, forw_end.y) - MIN_DIST), img_height));
-                int width = std::min(static_cast<int>(std::abs(forw_end.x - forw_start.x) + 2 * MIN_DIST), img_width - x);
-                int height = std::min(static_cast<int>(std::abs(forw_end.y - forw_start.y) + 2 * MIN_DIST), img_height - y);
+            std::vector<cv::Point2f> forw_keypoints;
+            std::vector<float> err;
+            std::vector<uchar> status; // 用于记录线段每个关键点的状态
 
-                // 创建搜索区域并进行线段检测
-                cv::Rect search_region(x, y, width, height);
+            // 对当前帧的线段关键点进行光流跟踪
+            cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_keypoints, forw_keypoints, status, err, cv::Size(21, 21), 3);
 
-                // 对搜索区域进行线段检测
-                EDLines lines = EDLines(forw_img(search_region));
-                auto detected_lines = lines.getLines();  // 获取检测到的线段
+            // 判断关键点跟踪成功率
+            int tracked_count = 0;
+            for (int j = 0; j < status.size(); j++)
+            {
+                if (status[j])
+                    tracked_count++;
+            }
 
-                bool matched = false;  // 标记是否成功匹配线段
-
-                // 遍历检测到的线段，进行匹配
-                for (const auto &new_line : detected_lines)
+            double success_ratio = (double)tracked_count / cur_keypoints.size();
+            /*
+            if (success_ratio > 0.7)  // 成功率高，至少70%的关键点被成功跟踪
+            {
+                std::vector<std::pair<double, double>> tracked_keypoints;
+                for (int j = 0; j < status.size(); j++)
                 {
-                    double dtw_distance = computeDTW(cur_segment.keyPoints, new_line.keyPoints);
-                    if (dtw_distance < 30)  // DTW距离小于阈值，表示匹配成功
+                    if (status[j])
                     {
-                        // DTW匹配成功，将线段加入跟踪结果
-                        forw_line_segments.push_back(new_line);
-
-                        // 更新线段关键点位置
-                        cur_segment.sx = new_line.sx;
-                        cur_segment.sy = new_line.sy;
-                        cur_segment.ex = new_line.ex;
-                        cur_segment.ey = new_line.ey;
-
-                        matched = true;  // 记录匹配成功
-                        break;
+                        tracked_keypoints.push_back({ forw_keypoints[j].x, forw_keypoints[j].y });
                     }
                 }
 
-                // 如果没有成功匹配，则标记为无效
-                if (!matched)
-                {
-                    lstatus[i] = 0; // 标记线段跟踪失败
-                }
+                // 将新的线段关键点添加到 forward 线段容器
+                LineSegment new_segment = cur_line_segments[i];
+                new_segment.keyPoints = tracked_keypoints;
+                forw_line_segments.push_back(new_segment);
             }
             else
             {
-                // 如果起点或终点光流跟踪失败，标记为无效
+                // 如果成功率太低，使用DTW进行验证
+                LineSegment new_segment = cur_line_segments[i];
+
+                // 对当前帧的线段关键点与前一帧进行DTW匹配
+                double dtw_distance = computeDTW(cur_line_segments[i].keyPoints, new_segment.keyPoints);
+                double DTW_THRESHOLD = 30;
+
+                if (dtw_distance > DTW_THRESHOLD)
+                {
+                    // 如果DTW距离较大，标记为无效
+                    lstatus[i] = 0;
+                }
+                else
+                {
+                    // 如果DTW验证通过，则将该线段添加到forward线段集合
+                    forw_line_segments.push_back(new_segment);
+                }
+            }*/
+
+            if (success_ratio < 0.3)  // 成功率低，至多30%的关键点被成功跟踪
+            {
                 lstatus[i] = 0;
+            }
+            else
+            {
+                std::vector<std::pair<double, double>> tracked_keypoints;
+                for (int j = 0; j < status.size(); j++)
+                {
+                    if (status[j])
+                    {
+                        tracked_keypoints.push_back({ forw_keypoints[j].x, forw_keypoints[j].y });
+                    }
+                }
+
+                // 将新的线段关键点添加到 forward 线段容器
+                LineSegment new_segment = cur_line_segments[i];
+                new_segment.keyPoints = tracked_keypoints;
+
+                // 对当前帧的线段关键点与前一帧进行DTW匹配
+                double dtw_distance = computeDTW(cur_line_segments[i].keyPoints, new_segment.keyPoints);
+                double DTW_THRESHOLD = 30;
+
+                if (dtw_distance > DTW_THRESHOLD)
+                {
+                    // 如果DTW距离较大，标记为无效
+                    lstatus[i] = 0;
+                }
+                else
+                {
+                    // 如果DTW验证通过，则将该线段添加到forward线段集合
+                    forw_line_segments.push_back(new_segment);
+                }
             }
         }
 
@@ -172,6 +198,8 @@ void FeatureTracker::lineflowTrack()
 
         ROS_DEBUG("line optical flow tracking costs: %fms", t_o.toc());
     }
+    }
+
 }
 
 double FeatureTracker::computeDTW(const std::vector<std::pair<double, double>>& cur_keypoints,
@@ -197,7 +225,6 @@ double FeatureTracker::computeDTW(const std::vector<std::pair<double, double>>& 
             dtw[i][j] = cost + std::min({ dtw[i - 1][j], dtw[i][j - 1], dtw[i - 1][j - 1] });
         }
     }
-
     // 返回最终的 DTW 距离
     return dtw[n][m];
 }
@@ -258,77 +285,54 @@ void FeatureTracker::trackNewlines()
 
         ROS_DEBUG("detect new line features begins");
         TicToc t_l;
-        int max_line = MAX_CNT / 2;
-        int l_max_cnt = max_line - static_cast<int>(forw_line_segments.size());
-        if (l_max_cnt > 0)
+
+        // 使用 EDLines 检测新线段
+        EDLines lines = EDLines(forw_img);
+        line_pts = lines.getLines(); // 将检测到的新线段加入到 line_pts 中
+
+        // 设置遮罩并筛选线段
+        for (const auto &prev_line : prev_line_map)
         {
-            // 使用 EDLines 检测新线段
-            EDLines lines = EDLines(forw_img);
-            line_pts = lines.getLines(); // 将检测到的新线段加入到 line_pts 中
+            const LineSegment &line = prev_line.second; // 获取线段
+            cv::Point2f start(static_cast<float>(line.sx), static_cast<float>(line.sy));
+            cv::Point2f end(static_cast<float>(line.ex), static_cast<float>(line.ey));
 
-            // 设置遮罩并筛选线段
-            for (const auto &prev_line : prev_line_map)
+            // 检查起点和终点是否在图像范围内
+            if (start.x >= 0 && start.x < mask.cols && start.y >= 0 && start.y < mask.rows &&
+                end.x >= 0 && end.x < mask.cols && end.y >= 0 && end.y < mask.rows)
             {
-                const LineSegment &line = prev_line.second; // 获取线段
-                cv::Point2f start(static_cast<float>(line.sx), static_cast<float>(line.sy));
-                cv::Point2f end(static_cast<float>(line.ex), static_cast<float>(line.ey));
-
-                // 计算线段的移动向量 (dx, dy)
-                cv::Point2f movement = end - start;
-                float length = cv::norm(movement); // 计算线段长度
-                cv::Point2f direction = movement / length; // 单位向量，表示方向
-
-                // 扩展起点和终点，使线段延长一定的距离，以应对线段的移动
-                float extension = 10.0; // 你可以根据实际情况调整延长的距离
-                cv::Point2f extended_start = start - direction * extension;
-                cv::Point2f extended_end = end + direction * extension;
-
-                // **边界检查**: 确保扩展后的起点和终点不会超出图像范围
-                extended_start.x = std::max(0.0f, std::min(static_cast<float>(mask.cols - 1), extended_start.x));
-                extended_start.y = std::max(0.0f, std::min(static_cast<float>(mask.rows - 1), extended_start.y));
-                extended_end.x = std::max(0.0f, std::min(static_cast<float>(mask.cols - 1), extended_end.x));
-                extended_end.y = std::max(0.0f, std::min(static_cast<float>(mask.rows - 1), extended_end.y));
-
                 // 在遮罩中对该线段的起点和终点占用此区域
-                cv::line(mask, extended_start, extended_end, cv::Scalar(0), MIN_DIST * 3);
+                cv::line(mask, start, end, cv::Scalar(0), MIN_DIST);
             }
+        }
 
-            for (auto &new_line : line_pts)
+        for (auto &new_line : line_pts)
+        {
+            cv::Point2f start(static_cast<float>(new_line.sx), static_cast<float>(new_line.sy));
+            cv::Point2f end(static_cast<float>(new_line.ex), static_cast<float>(new_line.ey));
+
+            // 检查起点和终点是否在图像范围内
+            if (start.x >= 0 && start.x < mask.cols && start.y >= 0 && start.y < mask.rows &&
+                end.x >= 0 && end.x < mask.cols && end.y >= 0 && end.y < mask.rows)
             {
-                cv::Point2f start(static_cast<float>(new_line.sx), static_cast<float>(new_line.sy));
-                cv::Point2f end(static_cast<float>(new_line.ex), static_cast<float>(new_line.ey));
-
-                // 不再检查起点和终点是否在图像范围内，因为它们是图像内检测到的线段
-                // 只判断是否在遮罩区域内
+                // 判断起点和终点是否在遮罩区域内
                 if (mask.at<uchar>(start) == 255 && mask.at<uchar>(end) == 255)
                 {
                     // 如果该线段的起点和终点均未被遮罩占用，将其加入当前帧的线段集合
                     forw_line_segments.push_back(new_line);
-
-                    // 计算线段的移动向量 (dx, dy)
-                    cv::Point2f movement = end - start;
-                    float length = cv::norm(movement); // 计算线段长度
-                    cv::Point2f direction = movement / length; // 单位向量，表示方向
-
-                    // 扩展起点和终点，使线段延长一定的距离，以应对线段的移动
-                    float extension = 10.0; // 根据实际情况调整
-                    cv::Point2f extended_start = start - direction * extension;
-                    cv::Point2f extended_end = end + direction * extension;
-
-                    // **边界检查**: 确保扩展后的起点和终点不会超出图像范围
-                    extended_start.x = std::max(0.0f, std::min(static_cast<float>(mask.cols - 1), extended_start.x));
-                    extended_start.y = std::max(0.0f, std::min(static_cast<float>(mask.rows - 1), extended_start.y));
-                    extended_end.x = std::max(0.0f, std::min(static_cast<float>(mask.cols - 1), extended_end.x));
-                    extended_end.y = std::max(0.0f, std::min(static_cast<float>(mask.rows - 1), extended_end.y));
-
                     // 在遮罩中对该线段的起点和终点占用此区域
-                    cv::line(mask, extended_start, extended_end, cv::Scalar(0), MIN_DIST * 3);
+                    cv::line(mask, start, end, cv::Scalar(0), MIN_DIST);
                     // 记录线段的 ID
                     line_ids.push_back(-1);
                 }
             }
-            ROS_DEBUG("detect new line features costs: %fms", t_l.toc());
+            else
+            {
+                // 如果起点或终点不在图像范围内，可以选择记录日志或跳过处理
+                std::cout << "Line start or end point out of bounds" << std::endl;
+            }
         }
+        ROS_DEBUG("detect new line features costs: %fms", t_l.toc());
     }
 }
 
@@ -627,7 +631,7 @@ void FeatureTracker::undistortedPoints()
 
 void FeatureTracker::undistortedLines() {
     // 清空之前的无畸变线段和映射表
-    cur_un_lines.clear(); // 存储当前帧的无畸变线段集合
+    std::vector<LineSegment> cur_un_lines; // 存储当前帧的无畸变线段集合
     std::map<int, LineSegment> cur_un_lines_map; // 存储每个线段 ID 与对应无畸变线段的映射关系
 
     // 处理当前帧线段

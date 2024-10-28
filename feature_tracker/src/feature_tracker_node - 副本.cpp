@@ -155,22 +155,22 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         sensor_msgs::ChannelFloat32 velocity_y_of_point;
 
         // 线段相关数据结构
-       sensor_msgs::ChannelFloat32 id_of_line;
-       sensor_msgs::PointCloudPtr feature_line_start(new sensor_msgs::PointCloud);
-       sensor_msgs::PointCloudPtr feature_line_end(new sensor_msgs::PointCloud);
-       sensor_msgs::ChannelFloat32 start_x;
-       sensor_msgs::ChannelFloat32 start_y;
-       sensor_msgs::ChannelFloat32 end_x;
-       sensor_msgs::ChannelFloat32 end_y;
-       sensor_msgs::ChannelFloat32 velocity_x_of_line;
-       sensor_msgs::ChannelFloat32 velocity_y_of_line;
+        sensor_msgs::ChannelFloat32 id_of_line;
+        sensor_msgs::PointCloudPtr feature_line_start(new sensor_msgs::PointCloud);
+        sensor_msgs::PointCloudPtr feature_line_end(new sensor_msgs::PointCloud);
+        sensor_msgs::ChannelFloat32 start_x;
+        sensor_msgs::ChannelFloat32 start_y;
+        sensor_msgs::ChannelFloat32 end_x;
+        sensor_msgs::ChannelFloat32 end_y;
+        sensor_msgs::ChannelFloat32 velocity_x_of_line;
+        sensor_msgs::ChannelFloat32 velocity_y_of_line;
 
         feature_points->header = img_msg->header;
         feature_points->header.frame_id = "world";
-       feature_line_start->header = img_msg->header; // 确保线段点云的头部信息
-       feature_line_start->header.frame_id = "world";
-       feature_line_end->header = img_msg->header;
-       feature_line_end->header.frame_id = "world";
+        feature_line_start->header = img_msg->header; // 确保线段点云的头部信息
+        feature_line_start->header.frame_id = "world";
+        feature_line_end->header = img_msg->header;
+        feature_line_end->header.frame_id = "world";
 
         vector<set<int>> hash_ids(NUM_OF_CAM);
         for (int i = 0; i < NUM_OF_CAM; i++)
@@ -197,9 +197,12 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
                     p.y = un_pts[j].y;
                     p.z = 1;
 
+                    // p存贮的是归一化平面坐标
                     feature_points->points.push_back(p);
                     id_of_point.values.push_back(p_id * NUM_OF_CAM + i);
+                    // u_of_point存储的是像素坐标
                     u_of_point.values.push_back(cur_pts[j].x);
+                    // v_of_point存储的是像素坐标
                     v_of_point.values.push_back(cur_pts[j].y);
                     velocity_x_of_point.values.push_back(pts_velocity[j].x);
                     velocity_y_of_point.values.push_back(pts_velocity[j].y);
@@ -241,15 +244,15 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         feature_points->channels.push_back(velocity_x_of_point);
         feature_points->channels.push_back(velocity_y_of_point);
 
-       // 将线段特征信息添加到消息中
-       feature_line_start->channels.push_back(id_of_line);
-       feature_line_start->channels.push_back(start_x);
-       feature_line_start->channels.push_back(start_y);
-       feature_line_end->channels.push_back(id_of_line);
-       feature_line_end->channels.push_back(end_x);
-       feature_line_end->channels.push_back(end_y);
-       feature_line_end->channels.push_back(velocity_x_of_line);
-       feature_line_end->channels.push_back(velocity_y_of_line);
+        // 将线段特征信息添加到消息中
+        feature_line_start->channels.push_back(id_of_line);
+        feature_line_start->channels.push_back(start_x);
+        feature_line_start->channels.push_back(start_y);
+        feature_line_end->channels.push_back(id_of_line);
+        feature_line_end->channels.push_back(end_x);
+        feature_line_end->channels.push_back(end_y);
+        feature_line_end->channels.push_back(velocity_x_of_line);
+        feature_line_end->channels.push_back(velocity_y_of_line);
 
         ROS_DEBUG("publish %f, at %f", feature_points->header.stamp.toSec(), ros::Time::now().toSec());
 

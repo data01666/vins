@@ -381,7 +381,6 @@ void line_feature_end_callback(const sensor_msgs::PointCloudConstPtr &line_featu
     con.notify_one();  // 唤醒等待的线程处理线特征
 }
 
-
 // 重置所有状态量并清空缓冲区
 void restart_callback(const std_msgs::BoolConstPtr &restart_msg)
 {
@@ -708,7 +707,7 @@ void process()
     }
 }
 
-// @brief main function 
+// @brief main function
 int main(int argc, char **argv)
 {
     // 初始化 ROS 节点，节点名称为 "vins_estimator"
@@ -756,4 +755,3 @@ int main(int argc, char **argv)
 
     return 0; // 程序正常结束
 }
-

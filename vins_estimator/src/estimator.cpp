@@ -31,6 +31,7 @@ void Estimator::setParameter()
     td = TD;
 }
 
+
 void Estimator::clearState()
 {
     // 遍历窗口内的所有状态
@@ -96,6 +97,7 @@ void Estimator::clearState()
     drift_correct_r = Matrix3d::Identity();
     drift_correct_t = Vector3d::Zero();
 }
+
 
 void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
 {
@@ -170,6 +172,7 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     gyr_0 = angular_velocity;
 }
 
+
 //void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header)
 void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image,const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &lines, const std_msgs::Header &header)
 {
@@ -183,7 +186,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         marginalization_flag = MARGIN_OLD;
     else
         marginalization_flag = MARGIN_SECOND_NEW;
-    addline(lines);
+    //addline(lines);
 
     // 2. 为初始化阶段构建所有图像帧的数据结构
     ROS_DEBUG("this frame is--------------------%s", marginalization_flag ? "reject" : "accept");
@@ -192,7 +195,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     ROS_DEBUG("number of feature: %d", f_manager.getFeatureCount());
     Headers[frame_count] = header;
 
-    if (solver_flag != NON_LINEAR) 
+    if (solver_flag != NON_LINEAR)
     {
         // 初始化时，创建图像帧结构并保存 IMU 预积分数据
         // 数据结构: imageframe是ImageFrame的一个实例，定义在initial / initial_alignment.h里,它是用于融合IMU和视觉信息的数据结构
@@ -209,13 +212,14 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
 
     // 4. 系统初始化
     if (solver_flag == INITIAL)
-	    initial(header);
+        initial(header);
 
     // 5. 进入非线性优化阶段
     else
         backend.backend(this);
 }
-void Estimator::addline(const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &lines)
+
+/*void Estimator::addline(const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &lines)
 {
     // 遍历所有线特征
     for (const auto &line : lines)
@@ -242,7 +246,7 @@ void Estimator::addline(const map<int, vector<pair<int, Eigen::Matrix<double, 12
             it->feature_per_frame.push_back(line_frame);
         }
     }
-}
+}*/
 
 void Estimator::calibrationExRotation()
 {

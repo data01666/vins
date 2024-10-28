@@ -14,13 +14,10 @@ void Backend::clearState()
 
 void Backend::backend(Estimator *estimator)
 {
-    // 创建计时器并调用位姿求解函数c
     TicToc t_solve;
-    // todo:创建计时器并调用位姿求解函数
     solveOdometry(estimator);
     ROS_DEBUG("solver costs: %fms", t_solve.toc());
 
-    // 检测失败状态
     if (failureDetection(estimator))
     {
         ROS_WARN("failure detection!");
@@ -34,22 +31,16 @@ void Backend::backend(Estimator *estimator)
         return;
     }
 
-    // 滑动窗口，用于边缘化旧的状态并保留最新的关键帧信息
-    //  todo:需要考虑线段信息
     TicToc t_margin;
     slideWindow(estimator);
 
-    // 移除在边缘化过程中检测到的无效特征
     estimator->f_manager.removeFailures();
-    // todo:移除在边缘化过程中检测到的无效线特征
     ROS_DEBUG("marginalization costs: %fms", t_margin.toc());
-
     // prepare output of VINS
     estimator->key_poses.clear();
     for (int i = 0; i <= WINDOW_SIZE; i++)
-        estimator->key_poses.push_back(estimator->Ps[i]);// 将滑动窗口中的位姿保存为关键帧位姿
+        estimator->key_poses.push_back(estimator->Ps[i]);
 
-    // 保存滑动窗口中最新帧的位姿信息，用于后续的处理
     estimator->last_R = estimator->Rs[WINDOW_SIZE];
     estimator->last_P = estimator->Ps[WINDOW_SIZE];
     estimator->last_R0 = estimator->Rs[0];
@@ -58,20 +49,13 @@ void Backend::backend(Estimator *estimator)
 
 void Backend::solveOdometry(Estimator *estimator)
 {
-    // 如果帧数量少于窗口大小，则无法进行位姿优化
     if (estimator->frame_count < WINDOW_SIZE)
         return;
-    // 检查当前求解器是否处于非线性优化阶段
     if (estimator->solver_flag == NON_LINEAR)
     {
         TicToc t_tri;
-        // 进行三角化以恢复 3D 特征点位置
         estimator->f_manager.triangulate(estimator->Ps, estimator->tic, estimator->ric);
-        // todo:进行线特征的三角化
-        //estimator->f_manager.triangulateLinepoint(estimator->Ps, estimator->tic, estimator->ric); // 三角化线特征点
         ROS_DEBUG("triangulation costs %f", t_tri.toc());
-        // 调用优化函数，对整个窗口内的位姿和特征点位置进行非线性优化
-        // todo:将线段信息纳入优化
         optimization(estimator);
     }
 }
@@ -262,16 +246,14 @@ bool Backend::failureDetection(Estimator *estimator)
 
 void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem,ceres::LossFunction *loss_function)
 {
-    vector2double(estimator);// 将 Estimator 的变量转换为 Ceres 需要的数组格式
+    vector2double(estimator);
 
-    // 1. 添加参数块（位姿和速度偏置）c
-    for (int i = 0; i < WINDOW_SIZE + 1; i++)//还包括最新的第11帧
+    for (int i = 0; i < WINDOW_SIZE + 1; i++)
     {
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
         problem.AddParameterBlock(para_Pose[i], SIZE_POSE, local_parameterization);
         problem.AddParameterBlock(para_SpeedBias[i], SIZE_SPEEDBIAS);
     }
-    // 2. 添加相机外参块
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
@@ -280,12 +262,11 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
         if (!ESTIMATE_EXTRINSIC)
         {
             ROS_DEBUG("fix extinsic param");
-            problem.SetParameterBlockConstant(para_Ex_Pose[i]);// 若不估计外参，则设置为常量
+            problem.SetParameterBlockConstant(para_Ex_Pose[i]);
         }
         else
             ROS_DEBUG("estimate extinsic param");
     }
-    // 3. 添加时间延迟参数块（若需要）
     if (ESTIMATE_TD)
     {
         problem.AddParameterBlock(para_Td[0], 1);
@@ -294,7 +275,6 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
 
     TicToc t_prepare;
 
-    // 4. 添加边缘化因子
     if (last_marginalization_info)
     {
         // construct new marginlization_factor
@@ -303,45 +283,38 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
                                  last_marginalization_parameter_blocks);
     }
 
-    // 5. 添加 IMU 因子
     for (int i = 0; i < WINDOW_SIZE; i++)
     {
         int j = i + 1;
         if (estimator->pre_integrations[j]->sum_dt > 10.0)
-            continue;// 跳过异常数据
+            continue;
         IMUFactor* imu_factor = new IMUFactor(estimator->pre_integrations[j]);
         problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
     }
-    // 6. 添加视觉残差（点特征）
-    int f_m_cnt = 0;// 记录添加的视觉测量数量c
-    int feature_index = -1;// 记录添加的视觉测量数量
+    int f_m_cnt = 0;
+    int feature_index = -1;
     for (auto &it_per_id : estimator->f_manager.feature)
     {
-        // 计算特征点被观测到的次数
         it_per_id.used_num = it_per_id.feature_per_frame.size();
-        // 如果特征点未在至少 2 帧中观测到，或特征点的起始帧接近窗口末端，则跳过该特征点
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
+ 
+        ++feature_index;
 
-        ++feature_index;// 增加特征点索引
+        int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
+        
+        Vector3d pts_i = it_per_id.feature_per_frame[0].point;
 
-        int imu_i = it_per_id.start_frame;// 特征点的起始帧索引
-        int imu_j = imu_i - 1;// 初始化为上一帧
-        Vector3d pts_i = it_per_id.feature_per_frame[0].point;// 获取特征点在起始帧的坐标
-
-        // 遍历特征点在后续各帧中的观测数据
         for (auto &it_per_frame : it_per_id.feature_per_frame)
         {
-            imu_j++;// 增加当前帧索引
+            imu_j++;
             if (imu_i == imu_j)
             {
-                // 跳过起始帧，因为它不与自身计算投影误差
                 continue;
             }
-            Vector3d pts_j = it_per_frame.point;// 获取特征点在当前帧中的坐标
+            Vector3d pts_j = it_per_frame.point;
             if (ESTIMATE_TD)
             {
-                // 如果需要估计时间延迟，则使用带时间延迟的投影因子
                     ProjectionTdFactor *f_td = new ProjectionTdFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
                                                                      it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td,
                                                                      it_per_id.feature_per_frame[0].uv.y(), it_per_frame.uv.y());
@@ -358,18 +331,16 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
             }
             else
             {
-                // 不考虑时间延迟的投影因子c
                 ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
                 problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
             }
-            f_m_cnt++;// 不考虑时间延迟的投影因子
+            f_m_cnt++;
         }
     }
 
     ROS_DEBUG("visual measurement count: %d", f_m_cnt);
     ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
 
-    // 7. 添加重定位因子（若有重定位信息）c
     if(estimator->relocalization_info)
     {
         //printf("set relocalization factor! \n");
@@ -385,7 +356,7 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
             ++feature_index;
             int start = it_per_id.start_frame;
             if(start <= estimator->relo_frame_local_index)
-            {
+            {   
                 while((int)estimator->match_points[retrive_feature_index].z() < it_per_id.feature_id)
                 {
                     retrive_feature_index++;
@@ -394,16 +365,15 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
                 {
                     Vector3d pts_j = Vector3d(estimator->match_points[retrive_feature_index].x(), estimator->match_points[retrive_feature_index].y(), 1.0);
                     Vector3d pts_i = it_per_id.feature_per_frame[0].point;
-
+                    
                     ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
                     problem.AddResidualBlock(f, loss_function, para_Pose[start], estimator->relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]);
                     retrive_feature_index++;
-                }
+                }     
             }
         }
     }
 
-    // 8. 进行 Ceres 优化
     ceres::Solver::Options options;
 
     options.linear_solver_type = ceres::DENSE_SCHUR;
@@ -424,8 +394,9 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
     ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
     ROS_DEBUG("solver costs: %f", t_solver.toc());
 
-    double2vector(estimator);// 将优化结果从 Ceres 数组格式转换回 Estimator 格式
-}
+    double2vector(estimator);
+} 
+
 
 void Backend::margOld(Estimator *estimator,ceres::LossFunction *loss_function)
 {
@@ -609,15 +580,13 @@ void Backend::margNew(Estimator *estimator)
 void Backend::optimization(Estimator *estimator)
 {
     TicToc t_whole;
-    ceres::Problem problem;// 创建 Ceres 的优化问题对象
-    ceres::LossFunction *loss_function;// 损失函数指针
-    // 设置损失函数为 Cauchy Loss，以处理异常值并提高鲁棒性
+    ceres::Problem problem;
+    ceres::LossFunction *loss_function;
+    //loss_function = new ceres::HuberLoss(1.0);
     loss_function = new ceres::CauchyLoss(1.0);
-    // 调用 nonLinearOptimization 函数，进行非线性优化
     nonLinearOptimization(estimator,problem,loss_function);
 
     TicToc t_whole_marginalization;
-    // 根据边缘化标志选择边缘化策略
     if (estimator->marginalization_flag == MARGIN_OLD)
         margOld(estimator,loss_function);   
     else

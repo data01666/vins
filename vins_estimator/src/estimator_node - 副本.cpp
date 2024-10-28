@@ -139,7 +139,7 @@ std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, featuredata>> getMe
     while (true)
     {
         // 边界判断：如果 IMU 缓冲区或特征缓冲区为空，说明配对完成
-        if (imu_buf.empty() || feature_buf.empty())
+        if (imu_buf.empty() || feature_buf.empty() || line_feature_start_buf.empty() || line_feature_end_buf.empty())
             return measurements;
 
         // IMU buf里面所有数据的时间戳都比img buf第一个帧时间戳要早，说明缺乏IMU数据，需要等待IMU数据
@@ -170,14 +170,47 @@ std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, featuredata>> getMe
         IMUs.emplace_back(imu_buf.front()); // 将最后一个IMU数据保留，因为IMU数据共享给相邻帧
 
         if (IMUs.empty())
-            ROS_WARN("no imu between two image");
+            ROS_WARN("no imu between two images");
 
-        // 创建测量数据结构
+        // 获取线特征起点和终点信息
+        sensor_msgs::PointCloudConstPtr line_start_msg = line_feature_start_buf.front();
+        sensor_msgs::PointCloudConstPtr line_end_msg = line_feature_end_buf.front();
+
+        // 检查线段特征的时间戳是否与图像时间戳一致
+        while (line_start_msg->header.stamp.toSec() < img_msg->header.stamp.toSec() ||
+               line_end_msg->header.stamp.toSec() < img_msg->header.stamp.toSec())
+        {
+            // 移除小于图像时间戳的线段起点
+            while (line_start_msg->header.stamp.toSec() < img_msg->header.stamp.toSec()) {
+                line_feature_start_buf.pop(); // 移除不匹配的起点
+                if (line_feature_start_buf.empty()) return measurements; // 如果线特征耗尽，则返回等待
+                line_start_msg = line_feature_start_buf.front(); // 更新起点
+            }
+
+            // 移除小于图像时间戳的线段终点
+            while (line_end_msg->header.stamp.toSec() < img_msg->header.stamp.toSec()) {
+                line_feature_end_buf.pop(); // 移除不匹配的终点
+                if (line_feature_end_buf.empty()) return measurements; // 如果线特征耗尽，则返回等待
+                line_end_msg = line_feature_end_buf.front(); // 更新终点
+            }
+        }
+
+        // 检查线特征的时间戳是否与图像特征一致，如果一致，则将线特征加入测量
         featuredata measurement;
-        measurement.point_features = img_msg; // 点特征是主要部分，始终存在
-        ROS_DEBUG("IMU size: %d, point features size: %d", IMUs.size(), measurement.point_features->points.size());
+        measurement.point_features = img_msg; // 点特征
+        if (line_start_msg->header.stamp.toSec() == img_msg->header.stamp.toSec() &&
+            line_end_msg->header.stamp.toSec() == img_msg->header.stamp.toSec()) {
+            measurement.line_features_start = line_start_msg; // 线段起点
+            measurement.line_features_end = line_end_msg; // 线段终点
 
-        // 无论线特征是否成功匹配，保存点特征和IMU数据
+            // 移除匹配成功的线段特征
+            line_feature_start_buf.pop();
+            line_feature_end_buf.pop();
+        } else {
+            ROS_WARN("No matching line features found for this image frame.");
+        }
+
+        // 保存点特征、线特征和IMU数据
         measurements.emplace_back(IMUs, measurement);
     }
 
@@ -190,44 +223,66 @@ void linemeasurement(std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>
         // 获取图像帧信息
         auto& img_msg = measurement.second.point_features;
 
-        if (line_feature_start_buf.empty() || line_feature_end_buf.empty()) {
-            continue;  // 继续处理下一个 measurement
+        // 锁定互斥量并等待线段特征缓冲区中有新数据
+        {
+            std::unique_lock<std::mutex> lock_start(m_line_buf);
+            con.wait(lock_start, [&] {
+                return !line_feature_start_buf.empty(); // 当线段起点缓冲区有数据时继续
+            });
+
+            std::unique_lock<std::mutex> lock_end(m_line_buf);
+            con.wait(lock_end, [&] {
+                return !line_feature_end_buf.empty(); // 当线段终点缓冲区有数据时继续
+            });
         }
 
-        // 确保缓冲区非空，开始查找匹配的时间戳
-        while (!line_feature_start_buf.empty() && !line_feature_end_buf.empty()) {
-            // 获取线段特征的起点和终点
-            sensor_msgs::PointCloudConstPtr line_start_msg = line_feature_start_buf.front();
-            sensor_msgs::PointCloudConstPtr line_end_msg = line_feature_end_buf.front();
+        // 获取线段特征的起点和终点消息
+        sensor_msgs::PointCloudConstPtr line_start_msg = line_feature_start_buf.front();
+        sensor_msgs::PointCloudConstPtr line_end_msg = line_feature_end_buf.front();
 
-            // 移除小于当前图像时间戳的线段特征
-            while (!line_feature_start_buf.empty() && line_start_msg->header.stamp.toSec() < img_msg->header.stamp.toSec()) {
-                line_feature_start_buf.pop();
-                if (!line_feature_start_buf.empty())
-                    line_start_msg = line_feature_start_buf.front(); // 获取更新后的起点
-            }
-            while (!line_feature_end_buf.empty() && line_end_msg->header.stamp.toSec() < img_msg->header.stamp.toSec()) {
-                line_feature_end_buf.pop();
-                if (!line_feature_end_buf.empty())
-                    line_end_msg = line_feature_end_buf.front(); // 获取更新后的终点
+        // 继续匹配时间戳
+        while (line_start_msg->header.stamp.toSec() < img_msg->header.stamp.toSec() ||
+               line_end_msg->header.stamp.toSec() < img_msg->header.stamp.toSec()) {
+
+            // 移除小于图像时间戳的线段起点
+            while (line_start_msg->header.stamp.toSec() < img_msg->header.stamp.toSec()) {
+                line_feature_start_buf.pop(); // 移除不匹配的起点
+                if (line_feature_start_buf.empty()) { // 如果为空则等待新数据
+                    std::unique_lock<std::mutex> lock_start(m_line_buf);
+                    con.wait(lock_start, [&] {
+                        return !line_feature_start_buf.empty(); // 等待新起点特征
+                    });
+                }
+                line_start_msg = line_feature_start_buf.front(); // 更新起点
             }
 
-            // 对比起点和终点时间戳，必须同时匹配
-            if (!line_feature_start_buf.empty() && !line_feature_end_buf.empty() &&
-                line_start_msg->header.stamp.toSec() == img_msg->header.stamp.toSec() &&
+            // 移除小于图像时间戳的线段终点
+            while (line_end_msg->header.stamp.toSec() < img_msg->header.stamp.toSec()) {
+                line_feature_end_buf.pop(); // 移除不匹配的终点
+                if (line_feature_end_buf.empty()) { // 如果为空则等待新数据
+                    std::unique_lock<std::mutex> lock_end(m_line_buf);
+                    con.wait(lock_end, [&] {
+                        return !line_feature_end_buf.empty(); // 等待新终点特征
+                    });
+                }
+                line_end_msg = line_feature_end_buf.front(); // 更新终点
+            }
+
+            // 检查是否存在匹配的起点和终点（时间戳是否一致）
+            if (line_start_msg->header.stamp.toSec() == img_msg->header.stamp.toSec() &&
                 line_end_msg->header.stamp.toSec() == img_msg->header.stamp.toSec()) {
 
+                // 保存匹配的线段特征
                 measurement.second.line_features_start = line_start_msg;
                 measurement.second.line_features_end = line_end_msg;
 
-                // 匹配成功后，从缓冲区中移除线段
+                // 匹配成功，移除起点和终点特征
                 line_feature_start_buf.pop();
                 line_feature_end_buf.pop();
-                break;
-            }
-            else {
+                break; // 结束此图像的线段特征匹配
+            } else {
                 // 如果线段特征时间戳大于图像帧，跳过当前图像帧
-                break;  // 跳出 while 循环，处理下一个 measurement
+                break;
             }
         }
 
@@ -301,39 +356,31 @@ void feature_callback(const sensor_msgs::PointCloudConstPtr &feature_msg)
 // 把当前帧的所有线特征起点放到 line_feature_start_buf
 void line_feature_start_callback(const sensor_msgs::PointCloudConstPtr &line_feature_start_msg)
 {
-    if (!init_line_feature)
-    {
-        // 跳过第一个检测到的线特征起点
-        init_line_feature = 1;
-        return;
-    }
     // 锁定缓冲区以安全地处理线特征数据
-    m_line_buf.lock();
-    // 将线特征起点消息推入缓冲区
-    line_feature_start_buf.push(line_feature_start_msg);
-    // 解锁缓冲区
-    m_line_buf.unlock();
-    // 通知一个等待线程，有新数据可用
-    con.notify_one();
+    {
+        std::unique_lock<std::mutex> lock(m_line_buf);  // 使用 std::unique_lock 来管理锁
+        // 将线特征起点消息推入缓冲区
+        line_feature_start_buf.push(line_feature_start_msg);
+    }  // 解锁缓冲区，当这个代码块结束时，lock 会自动释放锁
+
+    // 通知等待线程，有新数据可用
+    con.notify_one();  // 唤醒等待的线程处理线特征
 }
+
 // 把当前帧的所有线特征终点放到 line_feature_end_buf
 void line_feature_end_callback(const sensor_msgs::PointCloudConstPtr &line_feature_end_msg)
 {
-    if (!init_line_feature)
-    {
-        // 跳过第一个检测到的线特征终点
-        init_line_feature = 1;
-        return;
-    }
     // 锁定缓冲区以安全地处理线特征数据
-    m_line_buf.lock();
-    // 将线特征终点消息推入缓冲区
-    line_feature_end_buf.push(line_feature_end_msg);
-    // 解锁缓冲区
-    m_line_buf.unlock();
-    // 通知一个等待线程，有新数据可用
-    con.notify_one();
+    {
+        std::unique_lock<std::mutex> lock(m_line_buf);  // 使用 std::unique_lock 来管理锁
+        // 将线特征终点消息推入缓冲区
+        line_feature_end_buf.push(line_feature_end_msg);
+    }  // 解锁缓冲区，当这个代码块结束时，lock 会自动释放锁
+
+    // 通知等待线程，有新数据可用
+    con.notify_one();  // 唤醒等待的线程处理线特征
 }
+
 
 // 重置所有状态量并清空缓冲区
 void restart_callback(const std_msgs::BoolConstPtr &restart_msg)
@@ -473,11 +520,12 @@ void setReloFrame(sensor_msgs::PointCloudConstPtr &relo_msg)
 }
 
 // @brief 主 VIO 函数，包括初始化和优化
-//void processVIO(sensor_msgs::PointCloudConstPtr& img_msg)
-void processVIO(sensor_msgs::PointCloudConstPtr& img_msg,sensor_msgs::PointCloudConstPtr& line_start_msg, sensor_msgs::PointCloudConstPtr& line_end_msg)
+void processVIO(sensor_msgs::PointCloudConstPtr& img_msg)
+//void processVIO(sensor_msgs::PointCloudConstPtr& img_msg,sensor_msgs::PointCloudConstPtr& line_start_msg, sensor_msgs::PointCloudConstPtr& line_end_msg)
 {
     // 创建一个 map 用于存储图像特征点
     // key 是特征点的 ID，value 是一个包含相机 ID 和特征信息的向量
+    // 使用vector的原因是因为一个特征点可能在多个相机中可见
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> image;
 
     // 遍历图像中的每一个点
@@ -514,7 +562,7 @@ void processVIO(sensor_msgs::PointCloudConstPtr& img_msg,sensor_msgs::PointCloud
         image[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
     }
 
-    map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> lines; // 创建一个 map 用于存储线特征点
+    /*map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> lines; // 创建一个 map 用于存储线特征点
     // 检查线特征是否存在
     if (line_start_msg && line_end_msg) {
         // 遍历每一个线特征
@@ -556,10 +604,10 @@ void processVIO(sensor_msgs::PointCloudConstPtr& img_msg,sensor_msgs::PointCloud
                 }
             }
         }
-    }
+    }*/
     // 调用估计器的 processImage 函数，传入图像特征点和图像的头信息
-    //estimator.processImage(image,img_msg->header);
-    estimator.processImage(image, lines, img_msg->header);
+    estimator.processImage(image,img_msg->header);
+    //estimator.processImage(image, lines, img_msg->header);
 }
 
 // @brief visualization
@@ -586,10 +634,11 @@ void processMeasurement(std::vector<std::pair<std::vector<sensor_msgs::ImuConstP
         auto line_start_msg = measurement.second.line_features_start; // 获取线特征起点信息
         auto line_end_msg = measurement.second.line_features_end; // 获取线特征终点信息
 
-        /*if (measurement.second.line_features_start == nullptr || measurement.second.line_features_end == nullptr) {
+        //ROS_WARN("stamp %f \n", img_msg->header.stamp.toSec());
+        if (measurement.second.line_features_start == nullptr || measurement.second.line_features_end == nullptr) {
             ROS_WARN("Line features are null, skipping this frame.");
             //continue;  // 跳过这个 frame
-        }*/
+        }
 
         // 处理与当前图像帧相关的所有 IMU 数据
         for (auto &imu_msg : measurement.first)
@@ -602,8 +651,8 @@ void processMeasurement(std::vector<std::pair<std::vector<sensor_msgs::ImuConstP
 
         // 进行 VIO 处理的主函数
         TicToc t_s; // 开始计时
-        //processVIO(img_msg);
-        processVIO(img_msg,line_start_msg, line_end_msg); // 处理 VIO 计算,加入线特征
+        processVIO(img_msg);
+        //processVIO(img_msg,line_start_msg, line_end_msg); // 处理 VIO 计算,加入线特征
 
         double whole_t = t_s.toc(); // 记录处理总时间
         printStatistics(estimator, whole_t); // 打印统计信息
@@ -638,7 +687,7 @@ void process()
                  {
             return (measurements = getMeasurements()).size() != 0;
                  });
-        linemeasurement(measurements);
+        //linemeasurement(measurements);
 
         // 解锁缓冲区，允许其他线程继续访问
         lk.unlock();
@@ -687,12 +736,12 @@ int main(int argc, char **argv)
     // 订阅 IMU 数据的话题，回调函数为 imu_callback，消息队列大小为 2000，使用 tcpNoDelay 来防止延迟
     ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay());
 
+    // 订阅线特征起点数据，回调函数为 line_feature_start_callback
+    ros::Subscriber sub_line_start = n.subscribe("/feature_tracker/line_feature_start", 20000, line_feature_start_callback);
+    // 订阅线特征终点数据，回调函数为 line_feature_end_callback
+    ros::Subscriber sub_line_end = n.subscribe("/feature_tracker/line_feature_end", 20000, line_feature_end_callback);
     // 订阅点特征数据，回调函数为 feature_callback
     ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
-    // 订阅线特征起点数据，回调函数为 line_feature_start_callback
-    ros::Subscriber sub_line_start = n.subscribe("/feature_tracker/line_feature_start", 2000, line_feature_start_callback);
-    // 订阅线特征终点数据，回调函数为 line_feature_end_callback
-    ros::Subscriber sub_line_end = n.subscribe("/feature_tracker/line_feature_end", 2000, line_feature_end_callback);
 
     // 订阅重新启动特征跟踪器的话题，回调函数为 restart_callback
     ros::Subscriber sub_restart = n.subscribe("/feature_tracker/restart", 2000, restart_callback);
