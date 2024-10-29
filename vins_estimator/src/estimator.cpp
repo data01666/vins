@@ -186,7 +186,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         marginalization_flag = MARGIN_OLD;
     else
         marginalization_flag = MARGIN_SECOND_NEW;
-    //addline(lines);
+    addline(lines);
 
     // 2. 为初始化阶段构建所有图像帧的数据结构
     ROS_DEBUG("this frame is--------------------%s", marginalization_flag ? "reject" : "accept");
@@ -219,7 +219,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         backend.backend(this);
 }
 
-/*void Estimator::addline(const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &lines)
+void Estimator::addline(const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &lines)
 {
     // 遍历所有线特征
     for (const auto &line : lines)
@@ -246,7 +246,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
             it->feature_per_frame.push_back(line_frame);
         }
     }
-}*/
+}
 
 void Estimator::calibrationExRotation()
 {
