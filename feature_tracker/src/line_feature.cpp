@@ -933,7 +933,7 @@ int EDLines::ComputeMinLineLength() {
 
 	// 计算并返回最小线段长度，round 用于四舍五入，log10(0.125) 是经验参数
 	// todo:缩放因子0.5改为3.0
-	return (int) round((-logNT / log10(0.125)) * 3.0);
+	return (int) round((-logNT / log10(0.125)) * 0.5);
 }
 
 /**
