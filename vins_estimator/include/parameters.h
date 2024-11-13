@@ -45,8 +45,7 @@ enum SIZE_PARAMETERIZATION
 {
     SIZE_POSE = 7,
     SIZE_SPEEDBIAS = 9,
-    SIZE_FEATURE = 1,
-    SIZE_LINE_FEATURE = 2
+    SIZE_FEATURE = 1
 };
 
 enum StateOrder

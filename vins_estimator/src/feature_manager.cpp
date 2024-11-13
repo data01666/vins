@@ -23,7 +23,6 @@ void FeatureManager::setRic(Matrix3d _ric[])
 void FeatureManager::clearState()
 {
     feature.clear();
-    line_feature.clear();
 }
 
 int FeatureManager::getFeatureCount()
@@ -41,26 +40,7 @@ int FeatureManager::getFeatureCount()
     }
     return cnt;
 }
-int FeatureManager::getLineFeatureCount()
-{
-    int cnt = 0;
 
-    // 遍历所有线特征
-    for (auto &it : line_feature)
-    {
-        // 记录每个线特征被使用的次数
-        it.used_num = it.feature_per_frame.size();
-
-        // 如果线特征至少被使用 2 次且起始帧不在窗口末端，计数
-        if (it.used_num >= 2 && it.start_frame < WINDOW_SIZE - 2)
-        {
-            cnt++;
-        }
-    }
-
-    // 只返回线特征的数量
-    return cnt;
-}
 
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
@@ -177,31 +157,6 @@ void FeatureManager::setDepth(const VectorXd &x)
             it_per_id.solve_flag = 1;
     }
 }
-void FeatureManager::setLineDepth(const VectorXd &x)
-{
-    int line_feature_index = -1;
-    for (auto &it_per_id : line_feature)
-    {
-        it_per_id.used_num = it_per_id.feature_per_frame.size();
-        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
-            continue;
-
-        // 设置起点和终点的深度
-        line_feature_index++;  // 递增一次索引
-        it_per_id.estimated_depth_start = 1.0 / x(2 * line_feature_index);      // 更新起点的深度
-        it_per_id.estimated_depth_end = 1.0 / x(2 * line_feature_index + 1);    // 更新终点的深度
-
-        // 检查起点和终点的深度是否有效
-        if (it_per_id.estimated_depth_start < 0 || it_per_id.estimated_depth_end < 0)
-        {
-            it_per_id.solve_flag = 2;  // 线特征解算失败
-        }
-        else
-        {
-            it_per_id.solve_flag = 1;  // 线特征解算成功
-        }
-    }
-}
 
 void FeatureManager::removeFailures()
 {
@@ -211,18 +166,6 @@ void FeatureManager::removeFailures()
         it_next++;
         if (it->solve_flag == 2)
             feature.erase(it);
-    }
-}
-void FeatureManager::removeLineFailures()// todo:新增线特征移除失败函数
-{
-    for (auto it = line_feature.begin(), it_next = line_feature.begin();
-         it != line_feature.end(); it = it_next)
-    {
-        it_next++;
-        if (it->solve_flag == 2) // 判断线特征的求解状态是否为失败
-        {
-            line_feature.erase(it); // 移除失败的线特征
-        }
     }
 }
 
@@ -251,31 +194,6 @@ VectorXd FeatureManager::getDepthVector()
         dep_vec(++feature_index) = 1. / it_per_id.estimated_depth;
 #else
         dep_vec(++feature_index) = it_per_id->estimated_depth;
-#endif
-    }
-    return dep_vec;
-}
-VectorXd FeatureManager::getLineDepthVector()
-{
-    // 获取线特征的总数，每个线特征包含两个端点
-    VectorXd dep_vec(2 * getLineFeatureCount()); // 只考虑每个线特征的数量
-    int line_feature_index = -1;
-
-    // 遍历所有线特征
-    for (auto &it_per_id : line_feature)
-    {
-        // 记录线特征被使用的次数
-        it_per_id.used_num = it_per_id.feature_per_frame.size();
-
-        // 如果线特征被使用至少 2 次且起始帧不在窗口末端，则处理该线特征
-        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
-            continue;
-#if 1
-        dep_vec(++line_feature_index) = 1. / it_per_id.estimated_depth_start;
-        dep_vec(++line_feature_index) = 1. / it_per_id.estimated_depth_end;
-#else
-        dep_vec(++line_feature_index) = it_per_id->estimated_depth_start;
-        dep_vec(++line_feature_index) = it_per_id->estimated_depth_end;
 #endif
     }
     return dep_vec;
@@ -335,59 +253,6 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
             it_per_id.estimated_depth = INIT_DEPTH;
         }
 
-    }
-}
-void FeatureManager::triangulateLinepoint(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
-{
-    for (auto &it_per_id : line_feature)
-    {
-        it_per_id.used_num = it_per_id.feature_per_frame.size();
-        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
-            continue;
-        if (it_per_id.estimated_depth_start > 0 && it_per_id.estimated_depth_end > 0)
-            continue;
-
-        int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
-
-        // 统一起点和终点的三角化逻辑，避免重复代码
-        auto triangulateline = [&](Eigen::MatrixXd &svd_A, Eigen::Vector3d &frame_point, double &estimated_depth) {
-            int svd_idx = 0;
-            Eigen::Matrix<double, 3, 4> P0;
-            Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
-            Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
-            P0.leftCols<3>() = Eigen::Matrix3d::Identity();
-            P0.rightCols<1>() = Eigen::Vector3d::Zero();
-
-            for (auto &it_per_frame : it_per_id.feature_per_frame)
-            {
-                imu_j++;
-                Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
-                Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
-                Eigen::Vector3d t = R0.transpose() * (t1 - t0);
-                Eigen::Matrix3d R = R0.transpose() * R1;
-                Eigen::Matrix<double, 3, 4> P;
-                P.leftCols<3>() = R.transpose();
-                P.rightCols<1>() = -R.transpose() * t;
-
-                Eigen::Vector3d f = frame_point.normalized();
-                svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
-                svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
-            }
-
-            Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
-            estimated_depth = svd_V[2] / svd_V[3];
-
-            if (estimated_depth < 0.1)
-                estimated_depth = INIT_DEPTH;
-        };
-
-        // 起点三角化
-        Eigen::MatrixXd svd_A_start(2 * it_per_id.feature_per_frame.size(), 4);
-        triangulateline(svd_A_start, it_per_id.feature_per_frame[0].start_point, it_per_id.estimated_depth_start);
-
-        // 终点三角化
-        Eigen::MatrixXd svd_A_end(2 * it_per_id.feature_per_frame.size(), 4);
-        triangulateline(svd_A_end, it_per_id.feature_per_frame[0].end_point, it_per_id.estimated_depth_end);
     }
 }
 

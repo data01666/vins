@@ -135,7 +135,7 @@ void FeatureTracker::lineflowTrack()
                 for (const auto &new_line : detected_lines)
                 {
                     double dtw_distance = computeDTW(cur_segment.keyPoints, new_line.keyPoints);
-                    if (dtw_distance < 30)  // DTW距离小于阈值，表示匹配成功
+                    if (dtw_distance < 10)  // DTW距离小于阈值，表示匹配成功
                     {
                         // DTW匹配成功，将线段加入跟踪结果
                         forw_line_segments.push_back(new_line);
@@ -283,7 +283,7 @@ void FeatureTracker::trackNewlines()
                 cv::Point2f extended_start = start - direction * extension;
                 cv::Point2f extended_end = end + direction * extension;
 
-                // **边界检查**: 确保扩展后的起点和终点不会超出图像范围
+                // 边界检查: 确保扩展后的起点和终点不会超出图像范围
                 extended_start.x = std::max(0.0f, std::min(static_cast<float>(mask.cols - 1), extended_start.x));
                 extended_start.y = std::max(0.0f, std::min(static_cast<float>(mask.rows - 1), extended_start.y));
                 extended_end.x = std::max(0.0f, std::min(static_cast<float>(mask.cols - 1), extended_end.x));
@@ -656,7 +656,8 @@ void FeatureTracker::undistortedLines() {
     // 计算线段速度
     if (!prev_line_map.empty()) {
         double dt = cur_time - prev_time; // 计算时间差
-        line_velocity.clear(); // 清空上一帧线段速度集合
+        start_velocity.clear(); // 清空上一帧线段起点速度集合
+        end_velocity.clear(); // 清空上一帧线段终点速度集合
         for (unsigned int i = 0; i < cur_line_segments.size(); i++) {
             if (line_ids[i] != -1)
             {
@@ -669,18 +670,19 @@ void FeatureTracker::undistortedLines() {
                     double v_x_end = (cur_un_lines[i].ex - it->second.ex) / dt;
                     double v_y_end = (cur_un_lines[i].ey - it->second.ey) / dt;
 
-                    // 计算线段的平均速度
-                    cv::Point2f avg_velocity((v_x_start + v_x_end) / 2, (v_y_start + v_y_end) / 2);
-                    line_velocity.push_back(avg_velocity);
+                    start_velocity.push_back(cv::Point2f(v_x_start, v_y_start));
+                    end_velocity.push_back(cv::Point2f(v_x_end, v_y_end));
                 } else {
                     // 如果上一帧没有对应线段，速度设为0
-                    line_velocity.push_back(cv::Point2f(0, 0));
+                    start_velocity.push_back(cv::Point2f(0, 0));
+                    end_velocity.push_back(cv::Point2f(0, 0));
                 }
             }
         }
     } else {
         // 如果没有上一帧线段，所有速度设为0
-        line_velocity.resize(cur_line_segments.size(), cv::Point2f(0, 0));
+        start_velocity.resize(cur_line_segments.size(), cv::Point2f(0, 0));
+        end_velocity.resize(cur_line_segments.size(), cv::Point2f(0, 0));
     }
     // 更新上一帧的映射表
     prev_line_map = cur_un_lines_map;

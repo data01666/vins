@@ -154,7 +154,8 @@ class FeatureTracker
     map<int, LineSegment> cur_line_map;
     map<int, LineSegment> prev_line_map;
     // 线段的速度（可以根据关键点位置计算）
-    vector<cv::Point2f> line_velocity; // 每一条线段的移动速度
+    vector<cv::Point2f> start_velocity; // 每一条线段的移动速度
+    vector<cv::Point2f> end_velocity;
 };
 
 #endif

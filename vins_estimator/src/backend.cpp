@@ -15,7 +15,6 @@ void Backend::clearState()
 void Backend::backend(Estimator *estimator)
 {
     TicToc t_solve;
-    // todo:创建计时器并调用位姿求解函数
     solveOdometry(estimator);
     ROS_DEBUG("solver costs: %fms", t_solve.toc());
 
@@ -31,13 +30,11 @@ void Backend::backend(Estimator *estimator)
         ROS_WARN("system reboot!");
         return;
     }
-    // 滑动窗口，用于边缘化旧的状态并保留最新的关键帧信息
-    //  todo:需要考虑线段信息
+
     TicToc t_margin;
     slideWindow(estimator);
 
     estimator->f_manager.removeFailures();
-    // todo:移除在边缘化过程中检测到的无效线特征
     ROS_DEBUG("marginalization costs: %fms", t_margin.toc());
     // prepare output of VINS
     estimator->key_poses.clear();
@@ -58,8 +55,6 @@ void Backend::solveOdometry(Estimator *estimator)
     {
         TicToc t_tri;
         estimator->f_manager.triangulate(estimator->Ps, estimator->tic, estimator->ric);
-        // todo:进行线特征的三角化
-        estimator->f_manager.triangulateLinepoint(estimator->Ps, estimator->tic, estimator->ric); // 三角化线特征点
         ROS_DEBUG("triangulation costs %f", t_tri.toc());
         optimization(estimator);
     }
@@ -105,16 +100,6 @@ void Backend::vector2double(Estimator *estimator)
     VectorXd dep = estimator->f_manager.getDepthVector();
     for (int i = 0; i < estimator->f_manager.getFeatureCount(); i++)
         para_Feature[i][0] = dep(i);
-    // 将线特征的起点和终点的逆深度赋值到 para_Line_Feature 数组中
-    VectorXd line_dep = estimator->f_manager.getLineDepthVector();
-    for (int i = 0; i < estimator->f_manager.getLineFeatureCount(); i++)  // 遍历每个线特征
-    {
-        // 分别存储起点和终点的逆深度
-        para_LineFeature[i][0] = line_dep(2 * i);       // 线特征起点的逆深度
-        para_LineFeature[i][1] = line_dep(2 * i + 1);   // 线特征终点的逆深度
-    }
-   estimator->f_manager.setLineDepth(line_dep);
-
     if (ESTIMATE_TD)
         para_Td[0][0] = estimator->td;
 }
@@ -182,14 +167,6 @@ void Backend::double2vector(Estimator *estimator)
     for (int i = 0; i < estimator->f_manager.getFeatureCount(); i++)
         dep(i) = para_Feature[i][0];
     estimator->f_manager.setDepth(dep);
-    // 处理线特征的逆深度：
-    VectorXd line_dep = estimator->f_manager.getLineDepthVector();
-    for (int i = 0; i < estimator->f_manager.getLineFeatureCount(); i++)
-    {
-        line_dep(2 * i) = para_LineFeature[i][0];       // 起点深度
-        line_dep(2 * i + 1) = para_LineFeature[i][1];   // 终点深度
-    }
-    estimator->f_manager.setLineDepth(line_dep);
 
     if (ESTIMATE_TD)
         estimator->td = para_Td[0][0];
@@ -269,16 +246,14 @@ bool Backend::failureDetection(Estimator *estimator)
 
 void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem,ceres::LossFunction *loss_function)
 {
-    vector2double(estimator);// 将 Estimator 的变量转换为 Ceres 需要的数组格式
+    vector2double(estimator);
 
-    // 1. 添加参数块（位姿和速度偏置）
-    for (int i = 0; i < WINDOW_SIZE + 1; i++)//还包括最新的第11帧
+    for (int i = 0; i < WINDOW_SIZE + 1; i++)
     {
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
         problem.AddParameterBlock(para_Pose[i], SIZE_POSE, local_parameterization);
         problem.AddParameterBlock(para_SpeedBias[i], SIZE_SPEEDBIAS);
     }
-    // 2. 添加相机外参块
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
@@ -287,12 +262,11 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
         if (!ESTIMATE_EXTRINSIC)
         {
             ROS_DEBUG("fix extinsic param");
-            problem.SetParameterBlockConstant(para_Ex_Pose[i]);// 若不估计外参，则设置为常量
+            problem.SetParameterBlockConstant(para_Ex_Pose[i]);
         }
         else
             ROS_DEBUG("estimate extinsic param");
     }
-    // 3. 添加时间延迟参数块（若需要）
     if (ESTIMATE_TD)
     {
         problem.AddParameterBlock(para_Td[0], 1);
@@ -301,7 +275,6 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
 
     TicToc t_prepare;
 
-    // 4. 添加边缘化因子
     if (last_marginalization_info)
     {
         // construct new marginlization_factor
@@ -310,46 +283,38 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
                                  last_marginalization_parameter_blocks);
     }
 
-    // 5. 添加 IMU 因子
     for (int i = 0; i < WINDOW_SIZE; i++)
     {
         int j = i + 1;
         if (estimator->pre_integrations[j]->sum_dt > 10.0)
-            continue;// 跳过异常数据
+            continue;
         IMUFactor* imu_factor = new IMUFactor(estimator->pre_integrations[j]);
         problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
     }
-    // 6. 添加视觉残差（点特征）
-    int f_m_cnt = 0;// 记录添加的视觉测量数量
-    int feature_index = -1;// 特征点索引，初始化为 -1
+    int f_m_cnt = 0;
+    int feature_index = -1;
     for (auto &it_per_id : estimator->f_manager.feature)
     {
-        // 计算特征点被观测到的次数
         it_per_id.used_num = it_per_id.feature_per_frame.size();
-        // 如果特征点未在至少 2 帧中观测到，或特征点的起始帧接近窗口末端，则跳过该特征点
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
+ 
+        ++feature_index;
 
-        ++feature_index;// 增加特征点索引
+        int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
+        
+        Vector3d pts_i = it_per_id.feature_per_frame[0].point;
 
-        int imu_i = it_per_id.start_frame;  // 特征点的起始帧索引
-        int imu_j = imu_i - 1;  // 初始化为上一帧
-
-        Vector3d pts_i = it_per_id.feature_per_frame[0].point;// 获取特征点在起始帧的坐标
-
-        // 遍历特征点在后续各帧中的观测数据
         for (auto &it_per_frame : it_per_id.feature_per_frame)
         {
-            imu_j++; // 增加当前帧索引
+            imu_j++;
             if (imu_i == imu_j)
             {
-                // 跳过起始帧，因为它不与自身计算投影误差
                 continue;
             }
-            Vector3d pts_j = it_per_frame.point;// 获取特征点在当前帧中的坐标
+            Vector3d pts_j = it_per_frame.point;
             if (ESTIMATE_TD)
             {
-                // 如果需要估计时间延迟，则使用带时间延迟的投影因子
                     ProjectionTdFactor *f_td = new ProjectionTdFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
                                                                      it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td,
                                                                      it_per_id.feature_per_frame[0].uv.y(), it_per_frame.uv.y());
@@ -366,79 +331,16 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
             }
             else
             {
-                // 不考虑时间延迟的投影因子
                 ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
                 problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]);
             }
-            f_m_cnt++; // 增加视觉测量计数
-        }
-    }
-    // 6-1. 添加线特征残差
-    // 遍历线特征，将起点和终点作为两个独立的点特征来处理
-    int line_feature_index = 0;
-    for (auto &it_per_id : estimator->f_manager.line_feature) {
-        it_per_id.used_num = it_per_id.feature_per_frame.size();
-        if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
-            continue;
-
-        ++line_feature_index;
-        int imu_i = it_per_id.start_frame;
-        int imu_j = imu_i - 1;
-
-        // 获取线段的起点和终点
-        Vector3d pts_start = it_per_id.feature_per_frame[0].start_point;
-        Vector3d pts_end = it_per_id.feature_per_frame[0].end_point;
-
-        for (auto &line_frame : it_per_id.feature_per_frame) {
-            imu_j++;
-            if (imu_i == imu_j)
-                continue;
-
-            const Eigen::Vector3d &start_j = line_frame.start_point;
-            const Eigen::Vector3d &end_j = line_frame.end_point;
-
-            if (ESTIMATE_TD) {
-                // 对起点计算带时间延迟的重投影误差
-                ProjectionTdFactor *start_td_factor = new ProjectionTdFactor(
-                    pts_start, start_j,
-                    it_per_id.feature_per_frame[0].velocity, line_frame.velocity,
-                    it_per_id.feature_per_frame[0].cur_td, line_frame.cur_td,
-                    it_per_id.feature_per_frame[0].start_uv.y(), line_frame.start_uv.y()
-                );
-                problem.AddResidualBlock(start_td_factor, loss_function,
-                                         para_Pose[imu_i], para_Pose[imu_j],
-                                         para_Ex_Pose[0], &para_Feature[line_feature_index][0], para_Td[0]);
-
-                // 对终点计算带时间延迟的重投影误差
-                ProjectionTdFactor *end_td_factor = new ProjectionTdFactor(
-                    pts_end, end_j,
-                    it_per_id.feature_per_frame[0].velocity, line_frame.velocity,
-                    it_per_id.feature_per_frame[0].cur_td, line_frame.cur_td,
-                    it_per_id.feature_per_frame[0].end_uv.y(), line_frame.end_uv.y()
-                );
-                problem.AddResidualBlock(end_td_factor, loss_function,
-                                         para_Pose[imu_i], para_Pose[imu_j],
-                                         para_Ex_Pose[0], &para_Feature[line_feature_index][1], para_Td[0]);
-            } else {
-                // 对起点计算普通重投影误差
-                ProjectionFactor *start_factor = new ProjectionFactor(pts_start, start_j);
-                problem.AddResidualBlock(start_factor, loss_function,
-                                         para_Pose[imu_i], para_Pose[imu_j],
-                                         para_Ex_Pose[0], &para_Feature[line_feature_index][0]);
-
-                // 对终点计算普通重投影误差
-                ProjectionFactor *end_factor = new ProjectionFactor(pts_end, end_j);
-                problem.AddResidualBlock(end_factor, loss_function,
-                                         para_Pose[imu_i], para_Pose[imu_j],
-                                         para_Ex_Pose[0], &para_Feature[line_feature_index][1]);
-            }
+            f_m_cnt++;
         }
     }
 
     ROS_DEBUG("visual measurement count: %d", f_m_cnt);
     ROS_DEBUG("prepare for ceres: %f", t_prepare.toc());
 
-    // 7. 添加重定位因子（若有重定位信息）
     if(estimator->relocalization_info)
     {
         //printf("set relocalization factor! \n");
@@ -454,7 +356,7 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
             ++feature_index;
             int start = it_per_id.start_frame;
             if(start <= estimator->relo_frame_local_index)
-            {
+            {   
                 while((int)estimator->match_points[retrive_feature_index].z() < it_per_id.feature_id)
                 {
                     retrive_feature_index++;
@@ -463,16 +365,15 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
                 {
                     Vector3d pts_j = Vector3d(estimator->match_points[retrive_feature_index].x(), estimator->match_points[retrive_feature_index].y(), 1.0);
                     Vector3d pts_i = it_per_id.feature_per_frame[0].point;
-
+                    
                     ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
                     problem.AddResidualBlock(f, loss_function, para_Pose[start], estimator->relo_Pose, para_Ex_Pose[0], para_Feature[feature_index]);
                     retrive_feature_index++;
-                }
+                }     
             }
         }
     }
 
-    // 8. 进行 Ceres 优化
     ceres::Solver::Options options;
 
     options.linear_solver_type = ceres::DENSE_SCHUR;
@@ -493,8 +394,9 @@ void Backend::nonLinearOptimization(Estimator *estimator,ceres::Problem &problem
     ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
     ROS_DEBUG("solver costs: %f", t_solver.toc());
 
-    double2vector(estimator);// 将优化结果从 Ceres 数组格式转换回 Estimator 格式
-}
+    double2vector(estimator);
+} 
+
 
 void Backend::margOld(Estimator *estimator,ceres::LossFunction *loss_function)
 {
@@ -681,7 +583,6 @@ void Backend::optimization(Estimator *estimator)
     ceres::Problem problem;
     ceres::LossFunction *loss_function;
     //loss_function = new ceres::HuberLoss(1.0);
-    // 设置损失函数为 Cauchy Loss，以处理异常值并提高鲁棒性
     loss_function = new ceres::CauchyLoss(1.0);
     nonLinearOptimization(estimator,problem,loss_function);
 

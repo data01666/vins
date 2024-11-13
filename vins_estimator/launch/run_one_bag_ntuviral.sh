@@ -23,7 +23,6 @@ let ANC_MAX=ANC_ID_MAX+1
 
 # 设置实验结果输出目录
 export EXP_OUTPUT_DIR=$EPOC_DIR/result_${EXP_NAME};
-mkdir -p $EXP_OUTPUT_DIR;
 if ((FUSE_VIS==1))
 then
 export EXP_OUTPUT_DIR=${EXP_OUTPUT_DIR}_vis;  # 如果FUSE_VIS为1，则在目录名后加_vis

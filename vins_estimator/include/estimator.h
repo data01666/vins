@@ -42,10 +42,8 @@ class Estimator
      * @brief main process of vio
      * @param Input  const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header
      */    
-    //void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header);
-    void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &line, const std_msgs::Header &header);
-
-    void addline(const map<int, vector<pair<int, Eigen::Matrix<double, 12, 1>>>> &line);
+    void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header);
+   
     /**
      * @brief set relocolization frames
      * @param Input  double _frame_stamp, int _frame_index, vector<Vector3d> &_match_points, Vector3d _relo_t, Matrix3d _relo_r
