@@ -12,9 +12,8 @@ cd $CURR_DIR
 echo CURRENT DIR: $CURR_DIR
 echo VINS DIR:    $PACKAGE_DIR
 
-export EPOC_DIR=/root/result/vins-mono-improved/ntuviral
+export EPOC_DIR=/root/result/vins-mono-improved/ntuviral/result
 export DATASET_LOCATION=/root/dataset/ntuviral
-# export DATASET_LOCATION=/media/$USER/myHPSSD/NTU_VIRAL
 
 #region Run each dataset with VINS ------------------------------------------------------------------------------------
 

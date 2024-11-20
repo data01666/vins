@@ -53,6 +53,7 @@ Eigen::Vector3d gyr_0;
 
 // @param flags
 bool init_feature = 0;
+bool init_line = 0;
 bool init_imu = 1;
 double last_imu_t = 0;
 
@@ -120,6 +121,63 @@ getMeasurements()
 {
     std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>> measurements;
 
+    if (!init_line)
+        {
+         // 初始化未完成，丢弃buf里所有id大于10000的特征
+    std::queue<sensor_msgs::PointCloudConstPtr> filtered_buf; // 用于存储过滤后的特征点云
+
+    while (!feature_buf.empty())
+    {
+        sensor_msgs::PointCloudConstPtr feature = feature_buf.front();
+        feature_buf.pop();
+
+        // 创建一个新的点云消息用于存储过滤后的点
+        sensor_msgs::PointCloud::Ptr filtered_feature(new sensor_msgs::PointCloud);
+        filtered_feature->header = feature->header;
+
+        sensor_msgs::ChannelFloat32 id_of_point_filtered;
+        sensor_msgs::ChannelFloat32 u_of_point_filtered;
+        sensor_msgs::ChannelFloat32 v_of_point_filtered;
+        sensor_msgs::ChannelFloat32 velocity_x_of_point_filtered;
+        sensor_msgs::ChannelFloat32 velocity_y_of_point_filtered;
+
+        // 遍历点云中的每个点，过滤掉 ID > 10000 的点
+        for (size_t i = 0; i < feature->points.size(); ++i)
+        {
+            // 从 id_of_point 的 values 中获取点的 ID
+            int v = feature->channels[0].values[i] + 0.5; // 四舍五入
+            int id = v / NUM_OF_CAM;                     // 根据 NUM_OF_CAM 计算 ID
+
+            if (id <= 10000)
+            {
+                // 保留符合条件的点和其相关的 channel 数据
+                filtered_feature->points.push_back(feature->points[i]);
+                id_of_point_filtered.values.push_back(feature->channels[0].values[i]);
+                u_of_point_filtered.values.push_back(feature->channels[1].values[i]);
+                v_of_point_filtered.values.push_back(feature->channels[2].values[i]);
+                velocity_x_of_point_filtered.values.push_back(feature->channels[3].values[i]);
+                velocity_y_of_point_filtered.values.push_back(feature->channels[4].values[i]);
+            }
+        }
+
+        // 只有当过滤后的点云非空时才存入缓冲区
+        if (!filtered_feature->points.empty())
+        {
+            filtered_feature->channels.push_back(id_of_point_filtered);
+            filtered_feature->channels.push_back(u_of_point_filtered);
+            filtered_feature->channels.push_back(v_of_point_filtered);
+            filtered_feature->channels.push_back(velocity_x_of_point_filtered);
+            filtered_feature->channels.push_back(velocity_y_of_point_filtered);
+
+            filtered_buf.push(filtered_feature); // 存入过滤后的队列
+        }
+    }
+
+    // 用过滤后的点云队列替换原始队列
+    feature_buf = std::move(filtered_buf);
+
+        }
+
     while (true)
     {
         if (imu_buf.empty() || feature_buf.empty())
@@ -138,6 +196,7 @@ getMeasurements()
             feature_buf.pop();
             continue;
         }
+
         sensor_msgs::PointCloudConstPtr img_msg = feature_buf.front();
         feature_buf.pop();
 
@@ -336,7 +395,8 @@ void processVIO(sensor_msgs::PointCloudConstPtr& img_msg)
         xyz_uv_velocity << x, y, z, p_u, p_v, velocity_x, velocity_y;
         image[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
     }
-    estimator.processImage(image, img_msg->header);
+    //estimator.processImage(image, img_msg->header);
+    estimator.processImage(image, img_msg->header,init_line);
 }
 
 // @brief visualization

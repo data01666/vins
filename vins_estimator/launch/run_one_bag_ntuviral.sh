@@ -10,7 +10,7 @@ export LOG_DUR=${6:-300}                  # 日志记录持续时间，默认300
 export FUSE_UWB=${7:-0}                   # 是否融合UWB数据，默认0（不融合）
 export FUSE_VIS=${8:-0}                   # 是否融合视觉信息，默认0（不融合）
 export UWB_BIAS=${9:-0}                   # UWB偏置，默认0
-export ANC_ID_MAX=${10:-4}                # 锚点ID的最大值，默认4
+export ANC_ID_MAX=${10:--1}                # 锚点ID的最大值，默认-1
 
 # 获取bag文件的时长，并设置日志记录时长
 export BAG_DUR=$(rosbag info $DATASET_LOCATION/$EXP_NAME/$EXP_NAME.bag | grep 'duration' | sed 's/^.*(//' | sed 's/s)//');

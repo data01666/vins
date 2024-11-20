@@ -3,7 +3,7 @@
 #common parameters
 imu_topic:   "/imu/imu"
 image_topic: "/right/image_raw" #"/right/image_mono"
-output_path: "/root/result/vins-mono-improved/ntuviral"         # to save the pose graph
+output_path: "/root/result/vins-mono-improved/ntuviral/result"         # to save the pose graph
 
 #camera calibration 
 model_type:   PINHOLE
@@ -28,7 +28,7 @@ estimate_extrinsic: 1   # 0  Have an accurate extrinsic parameters. We will trus
 
 # If you choose 1 or 2, the extrinsic calibration result will be written vins_folder_path + ex_calib_result_path.
 # If you choose 0 or 1, you should write down the following matrix.
-ex_calib_result_path: "/root/result/vins-mono-improved/ntuviral/ex_calib_result.yaml"
+ex_calib_result_path: "/root/result/vins-mono-improved/ntuviral/result/ex_calib_result.yaml"
 
 #Rotation from camera frame to imu frame, imu^R_cam
 extrinsicRotation: !!opencv-matrix
@@ -75,4 +75,4 @@ loop_closure: 1   #if you want to use loop closure to minimize the drift, set lo
 # voc_file:     "/support_files/brief_k10L6.bin"
 min_loop_num: 25
 
-pose_graph_save_path: "/root/result/vins-mono-improved/ntuviral/pose_graph/"  # save and load path
+pose_graph_save_path: "/root/result/vins-mono-improved/ntuviral/result/pose_graph/"  # save and load path

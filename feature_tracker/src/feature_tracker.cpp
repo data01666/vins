@@ -180,26 +180,35 @@ double FeatureTracker::computeDTW(const std::vector<std::pair<double, double>>& 
     int n = cur_keypoints.size();
     int m = forw_keypoints.size();
 
-    // 创建 DTW 距离矩阵
-    std::vector<std::vector<double>> dtw(n + 1, std::vector<double>(m + 1, std::numeric_limits<double>::infinity()));
+    // 空间复杂度优化：仅保留两行
+    std::vector<double> prev(m + 1, std::numeric_limits<double>::infinity());
+    std::vector<double> curr(m + 1, std::numeric_limits<double>::infinity());
 
     // 初始化起点
-    dtw[0][0] = 0.0;
+    prev[0] = 0.0;
+
+    // 限制路径范围的带宽 (Sakoe-Chiba Band)
+    // todo:带宽的选择可以根据实际情况调整
+    int band = std::max(1, static_cast<int>(std::min(n, m) * 0.5)); // 带宽为关键点数量的10%
 
     // 计算 DTW 距离
     for (int i = 1; i <= n; i++)
     {
-        for (int j = 1; j <= m; j++)
+        curr[0] = std::numeric_limits<double>::infinity(); // 当前行第一列初始化为无穷大
+        for (int j = std::max(1, i - band); j <= std::min(m, i + band); j++)
         {
-            double cost = sqrt(pow(cur_keypoints[i - 1].first - forw_keypoints[j - 1].first, 2) +
-                               pow(cur_keypoints[i - 1].second - forw_keypoints[j - 1].second, 2));
+            // 计算距离（优化：不使用 sqrt）
+            double cost = pow(cur_keypoints[i - 1].first - forw_keypoints[j - 1].first, 2) +
+                          pow(cur_keypoints[i - 1].second - forw_keypoints[j - 1].second, 2);
 
-            dtw[i][j] = cost + std::min({ dtw[i - 1][j], dtw[i][j - 1], dtw[i - 1][j - 1] });
+            // 更新当前单元格的 DTW 距离
+            curr[j] = cost + std::min({ prev[j], curr[j - 1], prev[j - 1] });
         }
+        std::swap(prev, curr); // 滚动更新两行
     }
 
     // 返回最终的 DTW 距离
-    return dtw[n][m];
+    return prev[m]; // 最后一列即为结果
 }
 
 void FeatureTracker::trackNew()
@@ -315,7 +324,7 @@ void FeatureTracker::trackNewlines()
                     cv::Point2f extended_start = start - direction * extension;
                     cv::Point2f extended_end = end + direction * extension;
 
-                    // **边界检查**: 确保扩展后的起点和终点不会超出图像范围
+                    // 边界检查: 确保扩展后的起点和终点不会超出图像范围
                     extended_start.x = std::max(0.0f, std::min(static_cast<float>(mask.cols - 1), extended_start.x));
                     extended_start.y = std::max(0.0f, std::min(static_cast<float>(mask.rows - 1), extended_start.y));
                     extended_end.x = std::max(0.0f, std::min(static_cast<float>(mask.cols - 1), extended_end.x));

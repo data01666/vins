@@ -119,7 +119,8 @@ void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const
     gyr_0 = angular_velocity;
 }
 
-void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header)
+//void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header)
+void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const std_msgs::Header &header, bool &init)
 {
     // 1. decide marg_old or marg new and add features to f_manager
     ROS_DEBUG("new image coming ------------------------------------------");
@@ -152,8 +153,11 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
 	    initial(header);
 
     //5. optimization
-    else
+    else {
         backend.backend(this);
+        init = true;
+    }
+
 }
 
 void Estimator::calibrationExRotation()
