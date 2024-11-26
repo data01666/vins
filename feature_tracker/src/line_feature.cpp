@@ -933,7 +933,7 @@ int EDLines::ComputeMinLineLength() {
 
 	// 计算并返回最小线段长度，round 用于四舍五入，log10(0.125) 是经验参数
 	// todo:缩放因子0.5改为3.0
-	return (int) round((-logNT / log10(0.125)) * 2.0);
+	return (int) round((-logNT / log10(0.125)) * 0.5);
 }
 
 /**
@@ -994,7 +994,7 @@ void EDLines::SplitSegment2Lines(double *x, double *y, int noPixels, int segment
 
                     // 如果当前点与拟合线段的距离超过一定阈值，存储为关键点
                 	// todo：这里的阈值0.3是根据实际情况设定的，可以根据实际情况调整
-                    if (d > 0.1) {  // 这里设置一个较小的阈值用于筛选关键点
+                    if (d > 0.3) {  // 这里设置一个较小的阈值用于筛选关键点
                         keyPoints.push_back({x[index], y[index]});
                     }
 

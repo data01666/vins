@@ -66,6 +66,7 @@ class FeatureTracker
     void lineflowTrack();
     double computeDTW(const std::vector<std::pair<double, double>>& prev_keypoints,
                       const std::vector<std::pair<double, double>>& forw_keypoints);
+ std::vector<std::pair<double, double>> normalizeKeypoints(const std::vector<std::pair<double, double>> &keypoints);
     void trackNewlines();
     void addLines();
 
@@ -151,6 +152,7 @@ class FeatureTracker
     // 线段的ID
     vector<int> line_ids;       // 线段的ID
     static int line_n_id;      // 线段的n_id
+ vector<int> line_track_cnt; // 当前帧forw_img中每个线段被追踪的时间次数
     map<int, LineSegment> cur_line_map;
     map<int, LineSegment> prev_line_map;
     // 线段的速度（可以根据关键点位置计算）

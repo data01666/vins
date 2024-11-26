@@ -213,49 +213,58 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             // 处理线段特征
             for (unsigned int j = 0; j < line_ids.size(); j++)
             {
+                if(trackerData[i].line_track_cnt[j] > 1) {
+                    geometry_msgs::Point32 start_point, end_point;
 
-                geometry_msgs::Point32 start_point, end_point;
+                    start_point.x = cur_un_line[j].sx;
+                    start_point.y = cur_un_line[j].sy;
+                    start_point.z = 1;
+                    end_point.x = cur_un_line[j].ex;
+                    end_point.y = cur_un_line[j].ey;
+                    end_point.z = 1;
 
-                start_point.x = cur_un_line[j].sx;
-                start_point.y = cur_un_line[j].sy;
-                start_point.z = 1;
-                end_point.x = cur_un_line[j].ex;
-                end_point.y = cur_un_line[j].ey;
-                end_point.z = 1;
+                    feature_points->points.push_back(start_point);
+                    int start_id = (line_ids[j] + 10000);
+                    id_of_point.values.push_back(start_id* NUM_OF_CAM + i); // 假设 line_ids[j] 是有效的线段 ID
+                    u_of_point.values.push_back(line_segments[j].sx);
+                    v_of_point.values.push_back(line_segments[j].sy);
+                    velocity_x_of_point.values.push_back(start_velocity[j].x); // 假设有线段速度
+                    velocity_y_of_point.values.push_back(start_velocity[j].y);
+                    // 打印线段起点信息
+                    ROS_INFO("line start id: %d", start_id);
+                    ROS_INFO("line start point: %f, %f", line_segments[j].sx, line_segments[j].sy);
+                    ROS_INFO("line start velocity: %f, %f", start_velocity[j].x, start_velocity[j].y);
 
-                feature_points->points.push_back(start_point);
-                int start_id = (line_ids[j] + 10000);
-                id_of_point.values.push_back(start_id* NUM_OF_CAM + i); // 假设 line_ids[j] 是有效的线段 ID
-                u_of_point.values.push_back(line_segments[j].sx);
-                v_of_point.values.push_back(line_segments[j].sy);
-                velocity_x_of_point.values.push_back(start_velocity[j].x); // 假设有线段速度
-                velocity_y_of_point.values.push_back(start_velocity[j].y);
+                    feature_points->points.push_back(end_point);
+                    int end_id = (line_ids[j] + 10000)*2;
+                    id_of_point.values.push_back(end_id* NUM_OF_CAM + i);
+                    u_of_point.values.push_back(line_segments[j].ex);
+                    v_of_point.values.push_back(line_segments[j].ey);
+                    velocity_x_of_point.values.push_back(end_velocity[j].x); // 假设有线段速度
+                    velocity_y_of_point.values.push_back(end_velocity[j].y);
+                    // 打印线段终点信息
+                    ROS_INFO("line end id: %d", end_id);
+                    ROS_INFO("line end point: %f, %f", line_segments[j].ex, line_segments[j].ey);
+                    ROS_INFO("line end velocity: %f, %f", end_velocity[j].x, end_velocity[j].y);
 
-                feature_points->points.push_back(end_point);
-                int end_id = (line_ids[j] + 10000)*2;
-                id_of_point.values.push_back(end_id* NUM_OF_CAM + i);
-                u_of_point.values.push_back(line_segments[j].ex);
-                v_of_point.values.push_back(line_segments[j].ey);
-                velocity_x_of_point.values.push_back(end_velocity[j].x); // 假设有线段速度
-                velocity_y_of_point.values.push_back(end_velocity[j].y);
-
-                /*feature_line_start->points.push_back(start_point);
-                feature_line_end->points.push_back(end_point);
-                // 使用 line_ids[j] 生成唯一的负数ID
-                int start_id = (line_ids[j] + 10000);
-                int end_id = (line_ids[j] + 10000);
-                id_of_start.values.push_back(start_id); // 假设 line_ids[j] 是有效的线段 ID
-                id_of_end.values.push_back(end_id);
-                velocity_x_of_start.values.push_back(line_velocity[j].x); // 假设有线段速度
-                velocity_y_of_end.values.push_back(line_velocity[j].y);
-                velocity_x_of_end.values.push_back(line_velocity[j].x); // 假设有线段速度
-                velocity_y_of_end.values.push_back(line_velocity[j].y);
-                // 填充 start 和 end 通道
-                const auto &line = line_segments[j];
-                start_x.values.push_back(line.sx);
-                start_y.values.push_back(line.sy);
-                end_x.values.push_back(line.ex);
-                end_y.values.push_back(line.ey);*/
+                    /*feature_line_start->points.push_back(start_point);
+                    feature_line_end->points.push_back(end_point);
+                    // 使用 line_ids[j] 生成唯一的负数ID
+                    int start_id = (line_ids[j] + 10000);
+                    int end_id = (line_ids[j] + 10000);
+                    id_of_start.values.push_back(start_id); // 假设 line_ids[j] 是有效的线段 ID
+                    id_of_end.values.push_back(end_id);
+                    velocity_x_of_start.values.push_back(line_velocity[j].x); // 假设有线段速度
+                    velocity_y_of_end.values.push_back(line_velocity[j].y);
+                    velocity_x_of_end.values.push_back(line_velocity[j].x); // 假设有线段速度
+                    velocity_y_of_end.values.push_back(line_velocity[j].y);
+                    // 填充 start 和 end 通道
+                    const auto &line = line_segments[j];
+                    start_x.values.push_back(line.sx);
+                    start_y.values.push_back(line.sy);
+                    end_x.values.push_back(line.ex);
+                    end_y.values.push_back(line.ey);*/
+                }
             }
         }
 

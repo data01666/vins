@@ -87,11 +87,15 @@ struct LineSegment {
 class EDLines {
 public:
     // 构造函数，用于初始化EDLines的各项参数
-    EDLines(cv::Mat _srcImage, GradientOperator _op = PREWITT_OPERATOR, int _gradThresh = 20,
+    /*EDLines(cv::Mat _srcImage, GradientOperator _op = PREWITT_OPERATOR, int _gradThresh = 20,
             int _anchorThresh = 0, int _scanInterval = 1, int _minPathLen = 10,
             double _sigma = 1.5, bool _sumFlag = true, double _line_error = 1.0,
-            int _min_line_len = -1, double _max_distance_between_two_lines = 6.0, double _max_error = 1.3);
+            int _min_line_len = -1, double _max_distance_between_two_lines = 6.0, double _max_error = 1.3);*/
 
+    EDLines(cv::Mat _srcImage, GradientOperator _op = SOBEL_OPERATOR, int _gradThresh = 50,
+    int _anchorThresh = 30, int _scanInterval = 1, int _minPathLen = 50,
+    double _sigma = 1.5, bool _sumFlag = true, double _line_error = 0.5,
+    int _min_line_len = 30, double _max_distance_between_two_lines = 1.0, double _max_error = 0.5);
     // 在原始图像上绘制检测出的线段
     cv::Mat drawOnImage();
 

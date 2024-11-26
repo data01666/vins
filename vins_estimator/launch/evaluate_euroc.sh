@@ -14,11 +14,11 @@ for RESULT_DIR in "$RESULT_ROOT_DIR"/result_*; do
     echo "检测数据集: $DATASET_NAME"
 
     # 将 MH_01_easy 转换为 MH01 的格式
-    FORMATTED_DATASET_NAME=$(echo "$DATASET_NAME" | sed 's/_//g' | sed 's/easy//g' | sed 's/medium//g' | sed 's/difficult//g')
-    echo "格式化后的数据集名称: $FORMATTED_DATASET_NAME"
+    #FORMATTED_DATASET_NAME=$(echo "$DATASET_NAME" | sed 's/_//g' | sed 's/easy//g' | sed 's/medium//g' | sed 's/difficult//g')
+    #echo "格式化后的数据集名称: $FORMATTED_DATASET_NAME"
 
     # 找到对应的 groundtruth 文件路径
-    GROUNDTRUTH_FILE="$DATASET_DIR/$FORMATTED_DATASET_NAME/mav0/state_groundtruth_estimate0/data.csv"
+    GROUNDTRUTH_FILE="$DATASET_DIR/$DATASET_NAME/mav0/state_groundtruth_estimate0/data.csv"
     if [ ! -f "$GROUNDTRUTH_FILE" ]; then
       echo "错误: Groundtruth 文件 $GROUNDTRUTH_FILE 不存在，跳过 $RESULT_DIR"
       continue
